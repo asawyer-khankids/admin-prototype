@@ -6,19 +6,49 @@
 @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap');
 
 :root {
+  /* Primary – Indigo */
   --indigo-400: #0a2a66;
   --indigo-300: #546a94;
   --indigo-200: #9daac2;
   --indigo-100: #e7eaf0;
+
+  /* Primary – Teal */
   --teal-400:   #14bf96;
+  --teal-300:   #5bd2b6;
+  --teal-200:   #a1e5d5;
   --teal-100:   #e8f9f5;
+
+  /* Secondary – Blue */
+  --blue-500:   #48b6ce;
+  --blue-400:   #6dc5d8;
+  --blue-300:   #91d3e2;
+  --blue-200:   #b6e2eb;
+  --blue-100:   #daf0f5;
+
+  /* Secondary – Pink */
   --pink-500:   #ef6593;
+  --pink-400:   #f284a9;
+  --pink-300:   #f5a3be;
+  --pink-200:   #f9c1d4;
   --pink-100:   #fce0e9;
+
+  /* Secondary – Purple */
   --purple-500: #a47fbb;
   --purple-400: #b699c9;
+  --purple-300: #c8b2d6;
+  --purple-200: #dbcce4;
   --purple-100: #ede5f1;
-  --blue-500:   #48b6ce;
-  --blue-100:   #daf0f5;
+
+  /* Secondary – standalone */
+  --light-blue: #8bcdd3;
+  --red:        #f16756;
+
+  /* Semantic */
+  --green:      #acd076;
+  --yellow:     #f4bf51;
+  --yellow-100: #fff8e1;
+
+  /* Neutral */
   --white:      #ffffff;
   --grey-100:   #f8f9fb;
   --grey-200:   #e9e9e9;
@@ -26,10 +56,8 @@
   --grey-400:   #7b7979;
   --grey-500:   #4f4c4d;
   --grey-600:   #231f20;
-  --yellow:     #f4bf51;
-  --yellow-100: #fffbea;
-  --green:      #acd076;
-  --red:        #f16756;
+
+  /* Layout */
   --sidebar-w:  240px;
   --radius:     8px;
 }
@@ -175,13 +203,13 @@ nav { flex: 1; padding: 8px 0 20px; }
 .district-menu-item {
   padding: 10px 14px; font-size: 13px; color: var(--grey-600);
 }
-.district-menu-label { font-weight: 500; color: var(--grey-700); }
+.district-menu-label { font-weight: 500; color: var(--grey-600); }
 .district-menu-divider { border-top: 1px solid var(--grey-200); }
 .district-menu-signout {
   display: flex; align-items: center; gap: 8px;
   cursor: pointer; color: var(--grey-500);
 }
-.district-menu-signout:hover { background: var(--grey-100); color: var(--grey-700); }
+.district-menu-signout:hover { background: var(--grey-100); color: var(--grey-600); }
 
 /* Content */
 .content {
@@ -634,10 +662,10 @@ nav { flex: 1; padding: 8px 0 20px; }
 .edu-cell.age3   { background: var(--purple-100); }
 .edu-cell.age4   { background: var(--blue-100); }
 .edu-cell.kinder { background: var(--teal-100); }
-.edu-cell.class-score.age2   { background: #f9c3d5; }
-.edu-cell.class-score.age3   { background: #dfd1e9; }
-.edu-cell.class-score.age4   { background: #c4e7f0; }
-.edu-cell.class-score.kinder { background: #c5f0e6; }
+.edu-cell.class-score.age2   { background: var(--pink-200); }
+.edu-cell.class-score.age3   { background: var(--purple-200); }
+.edu-cell.class-score.age4   { background: var(--blue-200); }
+.edu-cell.class-score.kinder { background: var(--teal-200); }
 .edu-cell.not-attempted { background: var(--grey-200); vertical-align: middle; }
 
 .not-attempted-label {
@@ -706,7 +734,7 @@ nav { flex: 1; padding: 8px 0 20px; }
   padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
 }
 .status-not-started { background: var(--grey-200); color: var(--grey-600); }
-.status-in-progress { background: #fff3d6; color: #7a5200; }
+.status-in-progress { background: var(--yellow-100); color: #7a5200; }
 .status-completed   { background: #e8f4d6; color: #2d5a00; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot-not-started { background: var(--grey-400); }
