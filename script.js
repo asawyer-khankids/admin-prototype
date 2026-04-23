@@ -439,6 +439,7 @@ function renderFilterCard() {
           <label>Select language</label>
           ${sel('language', ['All','English','Spanish'], f.language)}
         </div>
+        <div class="filter-divider" aria-hidden="true"></div>
         <div class="filter-group">
           <label>Select school</label>
           ${sel('school', schools, effectiveSchool, schoolDisabled)}
@@ -455,8 +456,8 @@ function renderFilterCard() {
       <div class="filter-bottom">
         ${msgHtml}
         <div class="filter-actions">
-          <button class="btn btn-secondary" ${locked ? 'disabled' : ''} data-action="reset">&#8635; Reset</button>
-          <button class="btn btn-primary"    ${locked ? 'disabled' : ''} data-action="generate">&#9672; Generate Report</button>
+          <button class="btn btn-secondary" ${locked ? 'disabled' : ''} data-action="reset"><img src="reset.png" alt="" class="btn-ico" /> Reset</button>
+          <button class="btn btn-primary"    ${locked ? 'disabled' : ''} data-action="generate"><img src="generate.png" alt="" class="btn-ico" /> Generate Report</button>
         </div>
       </div>
     </div>`;
