@@ -70,31 +70,24 @@ RANK_TO_LEVEL_LABEL = {
     4: "KG Skills",
 }
 
-# Window membership rules (fixed per SPEC):
-#   Fall {Y}: 09/01..11/30 of year Y
-#   Winter {Y}: 12/01..02/28 of year Y..Y+1 (still labeled Winter Y)
-#   Spring {Y+1}: 03/01..05/15 of year Y+1
+# Window membership rules (two-window scheme for the 25-26 school year):
+#   Fall 2025:   Aug 1, 2025  – Dec 31, 2025
+#   Spring 2026: Jan 1, 2026  – Apr 27, 2026
+# Anything outside both ranges is dropped.
 def window_for(ts_iso: str) -> Optional[str]:
     # Accepts "2026-03-09 09:06:57+00" or "2026-03-09 09:06:57+00:00"
     s = ts_iso.replace(" ", "T")
-    # Tolerate "+00" trailing (no minutes)
     if s.endswith("+00"):
         s = s + ":00"
     try:
         dt = datetime.fromisoformat(s)
     except ValueError:
         return None
-    y, m, d = dt.year, dt.month, dt.day
-    if 9 <= m <= 11:
-        return f"Fall {y}"
-    if m == 12:
-        return f"Winter {y}"
-    if 1 <= m <= 2:
-        # Winter spans Dec Y .. Feb Y+1; we label by the start year.
-        return f"Winter {y - 1}"
-    if 3 <= m <= 5 and (m < 5 or d <= 15):
-        # Spring runs Mar 1 .. May 15
-        return f"Spring {y}"
+    d = dt.date()
+    if datetime(2025, 8, 1).date() <= d <= datetime(2025, 12, 31).date():
+        return "Fall 2025"
+    if datetime(2026, 1, 1).date() <= d <= datetime(2026, 4, 27).date():
+        return "Spring 2026"
     return None
 
 

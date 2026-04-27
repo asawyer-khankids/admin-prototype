@@ -416,7 +416,7 @@ let SL = {
 
 // Per-window data for "All assessment windows" mode
 // Real windows derived from data are filled in by refreshSL().
-let SL_WINDOWS = ['Fall 2025', 'Winter 2025', 'Spring 2026'];
+let SL_WINDOWS = ['Fall 2025', 'Spring 2026'];
 let SL_CURRENT_WINDOW = 'Spring 2026';
 const SL_WINDOW_DATA = {
   domain: {
@@ -1732,18 +1732,19 @@ function getReportTitle() {
    ============================================================ */
 function renderWindowBanner() {
   if (state.windowBannerDismissed) return '';
-  // Only show for completion and placement; simulate urgency based on selected window
+  // Only show for completion and placement; banner shows the selected window's date range.
   if (!['completion', 'student-placement'].includes(state.report)) return '';
-  const daysMap = { 'Spring 2027': 30, 'Fall 2026': 10, 'Winter 2026': 3 };
-  const days = daysMap[state.filters.window] || 30;
-  const colorClass = days >= 15 ? 'green' : days >= 7 ? 'yellow' : 'red';
-  const endDate = state.filters.window === 'Fall 2026' ? 'Aug 15, 2026 – Oct 31, 2026'
-                : state.filters.window === 'Winter 2026' ? 'Dec 1, 2026 – Feb 28, 2027'
-                : 'Mar 1, 2027 – May 15, 2027';
+  const ranges = {
+    'Fall 2025':   { dates: 'Aug 1 – Dec 31, 2025', daysLeft: 0 },
+    'Spring 2026': { dates: 'Jan 1 – Apr 27, 2026', daysLeft: 0 },
+  };
+  const r = ranges[state.filters.window];
+  if (!r) return ''; // "All assessment windows" or unknown — no banner
+  const colorClass = r.daysLeft >= 15 ? 'green' : r.daysLeft >= 7 ? 'yellow' : 'red';
   return `
     <div class="window-banner ${colorClass}" id="windowBanner">
       <span>&#128197;</span>
-      ${days} days remaining in the ${state.filters.window} window: ${endDate}
+      ${state.filters.window} window: ${r.dates}
       <button class="banner-close" data-action="dismissWindowBanner">&times;</button>
     </div>`;
 }

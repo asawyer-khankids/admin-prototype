@@ -40,6 +40,9 @@ GRADE_RE = re.compile(r"(Pre-K\s*\d|Kindergarten)")
 
 
 def window_for(ts_iso: str) -> Optional[str]:
+    # Two-window scheme:
+    #   Fall 2025:   Aug 1, 2025  – Dec 31, 2025
+    #   Spring 2026: Jan 1, 2026  – Apr 27, 2026
     s = ts_iso.replace(" ", "T")
     if s.endswith("+00"):
         s = s + ":00"
@@ -47,15 +50,11 @@ def window_for(ts_iso: str) -> Optional[str]:
         dt = datetime.fromisoformat(s)
     except ValueError:
         return None
-    y, m, d = dt.year, dt.month, dt.day
-    if 9 <= m <= 11:
-        return f"Fall {y}"
-    if m == 12:
-        return f"Winter {y}"
-    if 1 <= m <= 2:
-        return f"Winter {y - 1}"
-    if 3 <= m <= 5 and (m < 5 or d <= 15):
-        return f"Spring {y}"
+    d = dt.date()
+    if datetime(2025, 8, 1).date() <= d <= datetime(2025, 12, 31).date():
+        return "Fall 2025"
+    if datetime(2026, 1, 1).date() <= d <= datetime(2026, 4, 27).date():
+        return "Spring 2026"
     return None
 
 
