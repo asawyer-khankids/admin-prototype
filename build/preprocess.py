@@ -247,6 +247,10 @@ def main():
     # Pass 3: for each (user, scale, window), determine highest module passed.
     # Every (user, scale, window) where any q-item was attempted gets an entry.
     # rank = 0 means "attempted but no module passed"; rank 1-4 = highest module passed.
+    #
+    # Cutoff is PER-STUDENT (not dataset-wide). Assessments are adaptive: different
+    # students see different q-item subsets. So the cutoff should be relative to what
+    # the individual student actually attempted: cutoff = max(1, attempted - 2).
     print("Pass 3: scoring modules + computing per-(user, scale, window) level...")
     user_ids = sorted({uid for (uid, _, _, _) in latest})
     user_idx = {uid: i for i, uid in enumerate(user_ids)}
@@ -261,13 +265,12 @@ def main():
         key = (user_idx[uid], scale_idx[lp], window_idx[win])
         user_scale_window.setdefault(key, 0)
 
-    # Now pass 3b: for each module group, check the cutoff and promote rank.
     promoted = 0
     for (uid, lp, win, mod), items_map in latest.items():
-        total = len(total_items[(lp, mod)])
-        if total == 0:
+        student_attempts = len(items_map)  # distinct q-items the student actually saw
+        if student_attempts == 0:
             continue
-        cutoff = max(1, total - 2)
+        cutoff = max(1, student_attempts - 2)
         correct = sum(1 for (s, _ts) in items_map.values() if s == 100)
         if correct < cutoff:
             continue

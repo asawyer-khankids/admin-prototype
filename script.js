@@ -753,15 +753,15 @@ function renderFilterCard() {
   }
 
   const completionOpts = [
-    { value: 'spec',   label: 'SPEC (strict)' },
-    { value: 'soft50', label: 'Half SPEC' },
-    { value: 'loose',  label: 'Any attempt' },
+    { value: 'spec',   label: 'they’ve met the domain completion requirement' },
+    { value: 'soft50', label: 'they’ve met half the domain completion requirement' },
+    { value: 'loose',  label: 'they pass any one assessment' },
   ];
   const slGateOpts = [
-    { value: 'min1', label: '≥ 1 pass' },
-    { value: 'min2', label: '≥ 2 passes' },
-    { value: 'min3', label: '≥ 3 passes' },
-    { value: 'spec', label: 'SPEC threshold' },
+    { value: 'min1', label: 'they’ve passed any assessment' },
+    { value: 'min2', label: 'they’ve passed at least 2 assessments' },
+    { value: 'min3', label: 'they’ve passed at least 3 assessments' },
+    { value: 'spec', label: 'they’ve met the domain completion requirement' },
   ];
 
   return `
@@ -793,16 +793,23 @@ function renderFilterCard() {
           ${sel('grade', ['All grades','Pre-K 3','Pre-K 4','Kindergarten'], f.grade)}
         </div>
       </div>
-      <div class="filter-row filter-row-thresholds">
-        <div class="filter-group">
-          <label>Completion threshold</label>
-          ${sel('completionMode', completionOpts, f.completionMode || 'spec')}
-        </div>
-        <div class="filter-group">
-          <label>Show domain score when</label>
-          ${sel('slGate', slGateOpts, f.slGate || 'min1')}
-        </div>
-      </div>
+      ${
+        // AC uses the Completion threshold; SL + SP use the "show level when" gate.
+        // Only render the dropdown that applies to the current report.
+        state.report === 'completion'
+          ? `<div class="filter-row filter-row-thresholds">
+              <div class="filter-group">
+                <label>Mark student &ldquo;Completed&rdquo; when&hellip;</label>
+                ${sel('completionMode', completionOpts, f.completionMode || 'spec')}
+              </div>
+            </div>`
+          : `<div class="filter-row filter-row-thresholds">
+              <div class="filter-group">
+                <label>Show student&rsquo;s level when&hellip;</label>
+                ${sel('slGate', slGateOpts, f.slGate || 'min1')}
+              </div>
+            </div>`
+      }
       <div class="filter-bottom">
         ${msgHtml}
         <div class="filter-actions">
