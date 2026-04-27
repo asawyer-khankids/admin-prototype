@@ -72,8 +72,13 @@ function aggregateLevels(userIndices, scaleSel, windowName, languageFilter, grad
       if (useDomain && !domainScales.has(lvl.s)) continue;
       ranks.push(lvl.r);
     }
+    // Apply SL gate (minimum passes required to receive a domain score). Skipped for
+    // specific-scale views (scale-level levels don't need a multi-scale floor).
+    const cls = CD.classByGroup[stu.group_id];
+    const grade = cls ? cls.grade : 'Pre-K 4';
+    const minRequired = useScale ? 1 : slGateMinPasses(scaleSel, grade, stu.language);
     let level = 0; // not assessed
-    if (ranks.length > 0) {
+    if (ranks.length >= minRequired) {
       ranks.sort((a, b) => a - b);
       // Lower median for ties (matches the SPEC's "median" rollup intent).
       level = ranks[Math.floor((ranks.length - 1) / 2)];
@@ -102,21 +107,47 @@ const COMPLETION_THRESHOLDS = {
   // Default for grades not explicitly specced (e.g. Kindergarten): use Pre-K 4.
 };
 
-function requiredPassesFor(domain, grade, languageCode) {
-  // domain: 'Math'|'Literacy'|'Language'|'Executive Function'|'Overview'
-  // grade:  'Pre-K 3'|'Pre-K 4'|'Kindergarten'
-  // languageCode: 'EN'|'SP'
-  if (domain === 'Overview') return null; // Overview is computed differently below.
+// Raw SPEC threshold for (domain, grade, language) — ignores user mode setting.
+function specThresholdFor(domain, grade, languageCode) {
+  if (domain === 'Overview') return null;
   const table = COMPLETION_THRESHOLDS[grade] || COMPLETION_THRESHOLDS['Pre-K 4'];
   const entry = table[domain];
   if (!entry) return null;
   return entry[languageCode] || entry.EN;
 }
 
+// Required passes adjusted for the current Completion Mode setting (used by AC + SP).
+function requiredPassesFor(domain, grade, languageCode) {
+  if (domain === 'Overview') return null;
+  const spec = specThresholdFor(domain, grade, languageCode);
+  if (spec == null) return null;
+  const mode = (state && state.filters && state.filters.completionMode) || 'spec';
+  if (mode === 'loose') return 1;
+  if (mode === 'soft50') return Math.max(1, Math.round(spec / 2));
+  return spec;
+}
+
+// Minimum passes a student must have within a domain to receive an SL domain score.
+// (Students under this floor are counted as "Not Assessed" by aggregateLevels and aggregateReadiness.)
+function slGateMinPasses(domain, grade, languageCode) {
+  const mode = (state && state.filters && state.filters.slGate) || 'min1';
+  if (mode === 'min1') return 1;
+  if (mode === 'min2') return 2;
+  if (mode === 'min3') return 3;
+  if (mode === 'spec') {
+    if (!domain || domain === 'Overview') return 1; // Overview floor isn't a single SPEC value
+    const spec = specThresholdFor(domain, grade, languageCode);
+    return spec || 1;
+  }
+  return 1;
+}
+
 // Returns a single student's median rank (0-4) for a given domain in a given window.
-// 0 = not assessed, 1 = 2YO, 2 = 3YO, 3 = 4YO, 4 = KG.
+// 0 = not assessed (or under SL gate floor), 1 = 2YO, 2 = 3YO, 3 = 4YO, 4 = KG.
 function studentLevelForDomain(ui, domain, winIdx) {
   if (!CD.ready) return 0;
+  const stu = CD.studentByIdx[ui];
+  const cls = stu ? CD.classByGroup[stu.group_id] : null;
   const ranks = [];
   const useDomain = domain && domain !== 'Overview';
   const domainScales = useDomain ? new Set(CD.scalesByDomain[domain] || []) : null;
@@ -126,7 +157,8 @@ function studentLevelForDomain(ui, domain, winIdx) {
     if (useDomain && !domainScales.has(lvl.s)) continue;
     ranks.push(lvl.r);
   }
-  if (ranks.length === 0) return 0;
+  const minRequired = slGateMinPasses(domain, cls && cls.grade, stu && stu.language);
+  if (ranks.length < minRequired) return 0;
   ranks.sort((a, b) => a - b);
   return ranks[Math.floor((ranks.length - 1) / 2)];
 }
@@ -233,7 +265,8 @@ function aggregateReadiness(userIndices, domain, windowName, languageFilter) {
       if (useDomain && !domainScales.has(lvl.s)) continue;
       ranks.push(lvl.r);
     }
-    if (ranks.length === 0) { counts[0]++; continue; }
+    const minRequired = slGateMinPasses(useDomain ? domain : 'Overview', cls && cls.grade, stu.language);
+    if (ranks.length < minRequired) { counts[0]++; continue; }
     ranks.sort((a, b) => a - b);
     const studentRank = ranks[Math.floor((ranks.length - 1) / 2)];
 
@@ -532,6 +565,9 @@ const state = {
     school: 'All',
     cls: 'All',
     grade: 'All grades',
+    // Display thresholds — configurable so we can balance SPEC strictness vs. data coverage.
+    completionMode: 'spec',   // 'spec' | 'soft50' | 'loose'
+    slGate: 'min1',           // 'min1' (any pass) | 'min2' | 'min3' | 'spec'
   },
   sl: { level: 0, path: [], showAvg: false, expandedRows: new Set() },
   ac: { level: 0, path: [] },
@@ -663,12 +699,16 @@ function renderFilterCard() {
   const sel = (name, opts, val, dis = '') => {
     const isDisabled = dis || disabled;
     const disAttr = isDisabled ? ' data-disabled="true"' : '';
-    const items = opts.map(o =>
-      `<div class="cdd-option${o === val ? ' selected' : ''}" data-value="${esc(o)}">${esc(o)}</div>`
+    // opts can be ['x', 'y'] (label === value) or [{value, label}, ...]
+    const norm = opts.map(o => typeof o === 'string' ? { value: o, label: o } : o);
+    const current = norm.find(o => o.value === val);
+    const display = current ? current.label : val;
+    const items = norm.map(o =>
+      `<div class="cdd-option${o.value === val ? ' selected' : ''}" data-value="${esc(o.value)}">${esc(o.label)}</div>`
     ).join('');
     return `<div class="cdd${isDisabled ? ' cdd-disabled' : ''}" data-name="${name}"${disAttr}>
       <div class="cdd-trigger">
-        <span class="cdd-value">${esc(val)}</span>
+        <span class="cdd-value">${esc(display)}</span>
         <svg class="cdd-arrow" viewBox="0 0 10 6" width="10" height="6"><path d="M0 0l5 6 5-6z" fill="currentColor"/></svg>
       </div>
       <div class="cdd-menu">${items}</div>
@@ -712,6 +752,18 @@ function renderFilterCard() {
     msgHtml = '<div style="flex:1"></div>'; // spacer so buttons stay right
   }
 
+  const completionOpts = [
+    { value: 'spec',   label: 'SPEC (strict)' },
+    { value: 'soft50', label: 'Half SPEC' },
+    { value: 'loose',  label: 'Any attempt' },
+  ];
+  const slGateOpts = [
+    { value: 'min1', label: '≥ 1 pass' },
+    { value: 'min2', label: '≥ 2 passes' },
+    { value: 'min3', label: '≥ 3 passes' },
+    { value: 'spec', label: 'SPEC threshold' },
+  ];
+
   return `
     <div class="filter-card">
       <div class="filter-row">
@@ -739,6 +791,16 @@ function renderFilterCard() {
         <div class="filter-group">
           <label>Select grade</label>
           ${sel('grade', ['All grades','Pre-K 3','Pre-K 4','Kindergarten'], f.grade)}
+        </div>
+      </div>
+      <div class="filter-row filter-row-thresholds">
+        <div class="filter-group">
+          <label>Completion threshold</label>
+          ${sel('completionMode', completionOpts, f.completionMode || 'spec')}
+        </div>
+        <div class="filter-group">
+          <label>Show domain score when</label>
+          ${sel('slGate', slGateOpts, f.slGate || 'min1')}
         </div>
       </div>
       <div class="filter-bottom">
@@ -1840,7 +1902,10 @@ function wireEvents() {
       if (!isLocked() && state.filters[name] !== val) {
         state.filters[name] = val;
         if (name === 'school') state.filters.cls = 'All';
-        state.dirty = true;
+        // Threshold settings are display options — don't trigger the "regenerate" prompt.
+        if (name !== 'completionMode' && name !== 'slGate') {
+          state.dirty = true;
+        }
         render();
       }
       return;
@@ -2071,6 +2136,8 @@ function resetFilters() {
     school:   'All',
     cls:      'All',
     grade:    'All grades',
+    completionMode: 'spec',
+    slGate:   'min1',
   };
   state.dirty = true;
   render();

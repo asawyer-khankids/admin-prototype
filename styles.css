@@ -282,6 +282,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
   padding: 16px 20px 12px;
   flex-wrap: wrap;
 }
+.filter-row-thresholds {
+  padding-top: 0;
+  border-top: 1px dashed var(--grey-200);
+  padding-top: 12px;
+  margin-top: 4px;
+}
 
 .filter-group {
   display: flex; flex-direction: column; gap: 4px;
