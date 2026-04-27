@@ -83,10 +83,53 @@ function aggregateLevels(userIndices, scaleSel, windowName, languageFilter, grad
   return counts;
 }
 
-// Domain completion threshold (fraction of scales required to be considered "Complete").
-// SPEC values cluster around 70%; using a single fraction here as a placeholder until
-// the per-(domain, grade) thresholds are confirmed.
-const COMPLETION_THRESHOLD_FRACTION = 0.7;
+// Per-(domain, grade, language) completion thresholds from the SPEC. The student
+// must pass at least this many scales in the domain to be considered "Completed".
+// Kindergarten falls through to the Pre-K 4 thresholds (SPEC didn't specify KG).
+const COMPLETION_THRESHOLDS = {
+  'Pre-K 3': {
+    'Math':               { EN: 6, SP: 6 },
+    'Literacy':           { EN: 4, SP: 5 },
+    'Language':           { EN: 3, SP: 3 },
+    'Executive Function': { EN: 4, SP: 4 },
+  },
+  'Pre-K 4': {
+    'Math':               { EN: 7, SP: 7 },
+    'Literacy':           { EN: 6, SP: 7 },
+    'Language':           { EN: 3, SP: 3 },
+    'Executive Function': { EN: 4, SP: 4 },
+  },
+  // Default for grades not explicitly specced (e.g. Kindergarten): use Pre-K 4.
+};
+
+function requiredPassesFor(domain, grade, languageCode) {
+  // domain: 'Math'|'Literacy'|'Language'|'Executive Function'|'Overview'
+  // grade:  'Pre-K 3'|'Pre-K 4'|'Kindergarten'
+  // languageCode: 'EN'|'SP'
+  if (domain === 'Overview') return null; // Overview is computed differently below.
+  const table = COMPLETION_THRESHOLDS[grade] || COMPLETION_THRESHOLDS['Pre-K 4'];
+  const entry = table[domain];
+  if (!entry) return null;
+  return entry[languageCode] || entry.EN;
+}
+
+// Returns a single student's median rank (0-4) for a given domain in a given window.
+// 0 = not assessed, 1 = 2YO, 2 = 3YO, 3 = 4YO, 4 = KG.
+function studentLevelForDomain(ui, domain, winIdx) {
+  if (!CD.ready) return 0;
+  const ranks = [];
+  const useDomain = domain && domain !== 'Overview';
+  const domainScales = useDomain ? new Set(CD.scalesByDomain[domain] || []) : null;
+  for (const lvl of (CD.levelsByUser[ui] || [])) {
+    if (lvl.r === 0) continue;
+    if (winIdx !== null && lvl.w !== winIdx) continue;
+    if (useDomain && !domainScales.has(lvl.s)) continue;
+    ranks.push(lvl.r);
+  }
+  if (ranks.length === 0) return 0;
+  ranks.sort((a, b) => a - b);
+  return ranks[Math.floor((ranks.length - 1) / 2)];
+}
 
 function scalesInDomain(domain, language) {
   if (!CD.ready) return [];
@@ -97,10 +140,35 @@ function scalesInDomain(domain, language) {
   });
 }
 
+// Compute a single student's completion category for a single domain.
+// Returns 'not-started' | 'in-progress' | 'completed'.
+function studentDomainCompletion(ui, domain, winIdx) {
+  const stu = CD.studentByIdx[ui];
+  if (!stu) return 'not-started';
+  const cls = CD.classByGroup[stu.group_id];
+  const grade = cls ? cls.grade : 'Pre-K 4';
+  const required = requiredPassesFor(domain, grade, stu.language);
+  if (required == null) return 'not-started';
+  const eligible = new Set(scalesInDomain(domain, stu.language));
+
+  let attempted = 0, passed = 0;
+  const seen = new Set();
+  for (const lvl of (CD.levelsByUser[ui] || [])) {
+    if (winIdx !== null && lvl.w !== winIdx) continue;
+    if (!eligible.has(lvl.s)) continue;
+    if (seen.has(lvl.s)) continue;
+    seen.add(lvl.s);
+    attempted++;
+    if (lvl.r > 0) passed++;
+  }
+  if (attempted === 0) return 'not-started';
+  if (passed >= required) return 'completed';
+  return 'in-progress';
+}
+
 // Aggregate Assessment Completion: returns [notStarted, inProgress, completed] counts.
-// "Completed" = student passed >= ceil(THRESHOLD × scales-in-domain) scales.
-// "Not Started" = student attempted 0 scales in domain.
-// "In Progress" = anything between.
+// For 'Overview', a student is "Completed" only if they're Completed in ALL four
+// skill domains; "Not Started" if they haven't attempted any; "In Progress" otherwise.
 function aggregateCompletion(userIndices, domain, windowName, languageFilter, gradeFilter) {
   const counts = [0, 0, 0]; // not-started, in-progress, completed
   if (!CD.ready) return counts;
@@ -119,25 +187,17 @@ function aggregateCompletion(userIndices, domain, windowName, languageFilter, gr
       const c = CD.classByGroup[stu.group_id];
       if (!c || c.grade !== gradeFilter) continue;
     }
-    // Per-student language: scales eligible for this student
-    const eligibleScales = new Set(scalesInDomain(domain, stu.language));
-    const required = Math.ceil(eligibleScales.size * COMPLETION_THRESHOLD_FRACTION);
 
-    let attempted = 0;
-    let passed = 0;
-    const userLevels = CD.levelsByUser[ui] || [];
-    const seenScales = new Set();
-    for (const lvl of userLevels) {
-      if (winIdx !== null && lvl.w !== winIdx) continue;
-      if (!eligibleScales.has(lvl.s)) continue;
-      if (seenScales.has(lvl.s)) continue;
-      seenScales.add(lvl.s);
-      attempted++;
-      if (lvl.r > 0) passed++;
+    let category;
+    if (domain === 'Overview') {
+      const perDomain = SKILL_DOMAINS.map(d => studentDomainCompletion(ui, d, winIdx));
+      if (perDomain.every(c => c === 'not-started')) category = 'not-started';
+      else if (perDomain.every(c => c === 'completed')) category = 'completed';
+      else category = 'in-progress';
+    } else {
+      category = studentDomainCompletion(ui, domain, winIdx);
     }
-    if (attempted === 0) counts[0]++;
-    else if (passed >= required && required > 0) counts[2]++;
-    else counts[1]++;
+    counts[category === 'not-started' ? 0 : category === 'in-progress' ? 1 : 2]++;
   }
   return counts;
 }
@@ -966,49 +1026,79 @@ function renderSL_L2(path) {
 
 // L3 – Educator Report (class level)
 function renderSL_L3(path) {
-  const cls = path[2].label;
-  const data = SL.classReport[cls] || SL.classReport['Class 1A'];
+  const f = state.filters;
+  // path = [domain, 'District', school, class]
+  const drilledDomain = path[0].label;
+  const cls = path[3] ? path[3].label : path[2].label;
+  const clsObj = (CD.raw && CD.raw.classes || []).find(c => c.name === cls);
+  const stuIndices = clsObj ? (CD.studentsByGroup[clsObj.group_id] || []) : [];
+
   const LEVELS = ['age2', 'age3', 'age4', 'kinder'];
   const LEVEL_LABELS = { age2: 'Age 2 Skills', age3: 'Age 3 Skills', age4: 'Age 4 Skills', kinder: 'Kindergarten Skills' };
-  const SKILLS = {
-    age2:   ['Select the set with more or less, up to 2 similar items','Select the first item in a line'],
-    age3:   ['Select the set with more or less, up to 4 similar items','Select the first and second items in a line'],
-    age4:   ['Select the set with more or less, up to 5 similar items','Identify which number is greater, up to 10'],
-    kinder: ['Select the set with more or less, up to 10 similar items','Identify which number is greater, up to 10'],
-  };
+  // Convert numeric rank (1-4) to level key
+  const RANK_TO_LEVEL = { 1: 'age2', 2: 'age3', 3: 'age4', 4: 'kinder' };
+
+  const allWindows = !f.window || f.window === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[f.window];
+  const langCode = f.language === 'English' ? 'EN' : f.language === 'Spanish' ? 'SP' : 'All';
+
+  // Eligible students (apply language filter)
+  const eligibleStudents = stuIndices
+    .map(ui => CD.studentByIdx[ui])
+    .filter(s => s && (langCode === 'All' || s.language === langCode));
+
+  // Group students by their level for the primary domain
+  const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
+  for (const stu of eligibleStudents) {
+    const ui = CD.studentIdxByUid[stu.user_id];
+    const targetDomain = drilledDomain === 'Overview' ? 'Overview' : drilledDomain;
+    const rank = studentLevelForDomain(ui, targetDomain, winIdx);
+    if (rank === 0) buckets.notAttempted.push(stu.name);
+    else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+  }
+
+  // Class score = median rank across students who have any data
+  const classRanks = eligibleStudents
+    .map(stu => studentLevelForDomain(CD.studentIdxByUid[stu.user_id], drilledDomain, winIdx))
+    .filter(r => r > 0);
+  classRanks.sort((a, b) => a - b);
+  const classScoreRank = classRanks.length ? classRanks[Math.floor((classRanks.length - 1) / 2)] : 0;
+  const classScoreLevel = RANK_TO_LEVEL[classScoreRank] || null;
 
   const headerCols = LEVELS.map(lv => {
-    const isScore = lv === data.classScore;
+    const isScore = lv === classScoreLevel;
     return `<th>
       <div class="edu-col-header ${lv}${isScore ? ' class-score' : ''}">
         ${isScore ? '<div class="class-score-badge">Class Score</div>' : ''}
         <div style="font-weight:600;">${LEVEL_LABELS[lv]}</div>
-        <ul class="skill-bullets">
-          ${SKILLS[lv].map(s => `<li>${esc(s)}</li>`).join('')}
-        </ul>
       </div>
     </th>`;
   }).join('');
 
-  // Overview row (expanded, with student cards)
-  const notAttemptedCell = data.notAttempted.length
+  const notAttemptedCell = buckets.notAttempted.length
     ? `<td class="edu-cell not-attempted">
         <div class="not-attempted-label">Not Yet Attempted</div>
-        ${data.notAttempted.map(n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
+        ${buckets.notAttempted.map(n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
       </td>`
     : '';
 
   const studentCols = LEVELS.map(lv => {
-    const students = data[lv] || [];
-    const isScore = lv === data.classScore;
+    const students = buckets[lv] || [];
+    const isScore = lv === classScoreLevel;
     return `<td class="edu-cell ${lv}${isScore ? ' class-score' : ''}">
       ${students.map(n => `<div class="student-card" data-action="sl-drill-student:${esc(n)}">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
     </td>`;
   }).join('');
 
-  // Other domain rows (collapsed, show bar)
-  const otherRows = (data.otherDomains || []).map(d => {
-    const scoreLevel = d.score;
+  // Other domain rows: median rank for each, mapped to a single highlighted column
+  const otherDomains = SKILL_DOMAINS.filter(d => d !== drilledDomain);
+  const otherRows = otherDomains.map(domain => {
+    const ranks = eligibleStudents
+      .map(stu => studentLevelForDomain(CD.studentIdxByUid[stu.user_id], domain, winIdx))
+      .filter(r => r > 0);
+    ranks.sort((a, b) => a - b);
+    const scoreRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
+    const scoreLevel = RANK_TO_LEVEL[scoreRank] || null;
     const barCols = LEVELS.map(lv => {
       return `<td class="domain-bar-cell">
         <div class="domain-bar">
@@ -1020,7 +1110,7 @@ function renderSL_L3(path) {
       <td>
         <div class="edu-domain-cell">
           <button class="edu-expand-btn">&#8964;</button>
-          <span style="font-size:13px;font-weight:500;">${esc(d.name)}</span>
+          <span style="font-size:13px;font-weight:500;">${esc(domain)}</span>
         </div>
       </td>
       ${barCols}
@@ -1031,7 +1121,7 @@ function renderSL_L3(path) {
     ${renderBreadcrumbs(path)}
     <div class="report-toolbar">
       <div class="toolbar-left"></div>
-      <div class="toolbar-center">Fall Student Levels <span class="info-icon">&#9432;</span></div>
+      <div class="toolbar-center">${esc(getReportTitle())} <span class="info-icon">&#9432;</span></div>
       <div class="toolbar-right"><button class="btn btn-ghost">&#11015; Download CSV</button></div>
     </div>
     <div class="tbl-wrap">
@@ -1047,7 +1137,7 @@ function renderSL_L3(path) {
             <td>
               <div class="edu-domain-cell">
                 <button class="edu-expand-btn open">&#8964;</button>
-                <span style="font-size:13px;font-weight:600;">Overview</span>
+                <span style="font-size:13px;font-weight:600;">${esc(drilledDomain)}</span>
               </div>
             </td>
             ${notAttemptedCell}
@@ -1232,23 +1322,16 @@ function renderAC_L3(path) {
     if (!stu) return '';
     if (langCode !== 'All' && stu.language !== langCode) return '';
 
-    // Compute per-student completion status for the drilled domain
-    const eligible = new Set(scalesInDomain(drilledDomain, stu.language));
-    const required = Math.ceil(eligible.size * COMPLETION_THRESHOLD_FRACTION);
-    let attempted = 0, passed = 0;
-    const seen = new Set();
-    for (const lvl of (CD.levelsByUser[ui] || [])) {
-      if (winIdx !== null && lvl.w !== winIdx) continue;
-      if (!eligible.has(lvl.s)) continue;
-      if (seen.has(lvl.s)) continue;
-      seen.add(lvl.s);
-      attempted++;
-      if (lvl.r > 0) passed++;
+    // For Overview, a student is Completed only if all 4 skill domains are Completed.
+    let status;
+    if (drilledDomain === 'Overview') {
+      const perDomain = SKILL_DOMAINS.map(d => studentDomainCompletion(ui, d, winIdx));
+      status = perDomain.every(c => c === 'not-started') ? 'not-started'
+             : perDomain.every(c => c === 'completed') ? 'completed'
+             : 'in-progress';
+    } else {
+      status = studentDomainCompletion(ui, drilledDomain, winIdx);
     }
-    const status = attempted === 0 ? 'not-started'
-                 : (passed >= required && required > 0) ? 'completed'
-                 : 'in-progress';
-
     const st = statusMap[status];
     return `<tr>
       <td>${makeAvatar(stu.name)} &nbsp; ${esc(stu.name)}</td>
