@@ -17,15 +17,21 @@ Inputs (relative to repo root):
 Output:
   data/computed.json   compact pre-aggregated structure consumed by script.js
 
-Scoring rules (intentionally simple while real cutoffs aren't finalized):
-  * q-items only count (rows where item starts with 'q'); p-items are filtered out.
-  * For each (user, leaf_path, module) within a window, take the LATEST attempt per
-    item by timestamp_local. A correct answer is score == 100.
-  * Module-passed if correct_count >= total_q_items_in_module - 2, where
-    total_q_items_in_module is the number of distinct q-item codes observed for that
-    (leaf_path, module) across the full dataset.
-  * Per-(user, leaf_path, window) level = highest module passed, mapped to a 0-4
-    scale: 0 = Not Assessed, 1 = 2YO, 2 = 3YO, 3 = 4YO, 4 = KG.
+Scoring rules (matches the user's walkthrough on MAT8V2):
+  * q-items only count (rows where item starts with 'q'); p* practice items are skipped.
+  * For each (user, leaf_path, module, item), keep the HIGHEST score across all
+    attempts. A "correct" answer is score == 100.
+  * Per-student per-module pass/fail: pass if correct_q_items >= attempted - 2
+    (with a floor of 1). The cutoff is per-student because assessments are adaptive
+    and different students see different q-item subsets.
+  * Per-(user, leaf_path, window) Learning Zone (the prototype's "level"):
+      0 = Not Assessed         (no q-items attempted in any module)
+      1 = 2YO Skills           (failed at 2YO, the first module attempted)
+      2 = 3YO Skills           (passed 2YO, failed at 3YO; or jumped in at 3YO and failed)
+      3 = 4YO Skills           (passed 3YO, failed at 4YO; or skipped to 4YO and failed)
+      4 = Kindergarten Skills  (passed 4YO, failed/working on KG; or passed KG → cap at 4)
+    "First failed module wins"; modules not attempted by an older student (because
+    the test placed them higher) are treated as passed-by-placement.
 
 Module normalization:
   Math/Literacy use age-band module codes directly: 2YO/3YO/4YO/KG.
@@ -208,10 +214,11 @@ def main():
                 print(f"    {n:,} rows...")
     print(f"  module totals: {len(total_items)} (leaf_path, module) pairs")
 
-    # Pass 2: per (user, leaf_path, module, item) keep latest attempt by timestamp.
-    print("Pass 2: aggregating latest attempts per (user, scale, module, item)...")
-    # latest[(user, leaf_path, window, module)][item] = (score, ts)
-    latest: dict[tuple, dict[str, tuple[int, str]]] = defaultdict(dict)
+    # Pass 2: per (user, leaf_path, window, module, item) keep the HIGHEST score
+    # across all attempts. p-items (practice) are skipped; only q-items count.
+    print("Pass 2: aggregating HIGHEST score per (user, scale, window, module, item)...")
+    # best[(user, leaf_path, window, module)][item] = max_score
+    best: dict[tuple, dict[str, int]] = defaultdict(dict)
     user_languages: dict[str, set[str]] = defaultdict(set)
 
     with open(items_path, newline="") as f:
@@ -231,60 +238,76 @@ def main():
             uid = row["user_id"]
             mod = row["module"]
             item = row["item"]
-            ts = row["timestamp_local"]
             key = (uid, lp, win, mod)
-            existing = latest[key].get(item)
-            if existing is None or ts > existing[1]:
-                latest[key][item] = (score, ts)
+            prev = best[key].get(item)
+            if prev is None or score > prev:
+                best[key][item] = score
             lang = row["language_"]
             if lang == "ES":
                 lang = "SP"
             user_languages[uid].add(lang)
             if n % 200000 == 0:
                 print(f"    {n:,} rows...")
-    print(f"  unique (user, scale, window, module) groups: {len(latest):,}")
+    print(f"  unique (user, scale, window, module) groups: {len(best):,}")
 
-    # Pass 3: for each (user, scale, window), determine highest module passed.
-    # Every (user, scale, window) where any q-item was attempted gets an entry.
-    # rank = 0 means "attempted but no module passed"; rank 1-4 = highest module passed.
-    #
-    # Cutoff is PER-STUDENT (not dataset-wide). Assessments are adaptive: different
-    # students see different q-item subsets. So the cutoff should be relative to what
-    # the individual student actually attempted: cutoff = max(1, attempted - 2).
-    print("Pass 3: scoring modules + computing per-(user, scale, window) level...")
-    user_ids = sorted({uid for (uid, _, _, _) in latest})
+    # Pass 3: for each (user, scale, window), determine pass/fail per module-rank
+    # (1=2YO, 2=3YO, 3=4YO, 4=KG), then compute the Learning Zone:
+    #   - First attempted module that the student FAILED → that's the zone.
+    #   - If all attempted modules passed, zone = (highest_passed_rank + 1), capped at 4.
+    #   - If no modules attempted at all, zone = 0 (Not Assessed).
+    # Modules NOT attempted (e.g., the test placed an older student straight into 3YO)
+    # are treated as passed-by-placement.
+    print("Pass 3: pass/fail per module + Learning Zone per (user, scale, window)...")
+    user_ids = sorted({uid for (uid, _, _, _) in best})
     user_idx = {uid: i for i, uid in enumerate(user_ids)}
-    scale_keys = sorted({lp for (_, lp, _, _) in latest})
+    scale_keys = sorted({lp for (_, lp, _, _) in best})
     scale_idx = {lp: i for i, lp in enumerate(scale_keys)}
-    window_keys = sorted({w for (_, _, w, _) in latest})
+    window_keys = sorted({w for (_, _, w, _) in best})
     window_idx = {w: i for i, w in enumerate(window_keys)}
 
-    # Initialize every attempted (user, scale, window) at rank 0; promote up as modules pass.
-    user_scale_window: dict[tuple[int, int, int], int] = {}
-    for (uid, lp, win, _mod) in latest.keys():
-        key = (user_idx[uid], scale_idx[lp], window_idx[win])
-        user_scale_window.setdefault(key, 0)
-
-    promoted = 0
-    for (uid, lp, win, mod), items_map in latest.items():
-        student_attempts = len(items_map)  # distinct q-items the student actually saw
-        if student_attempts == 0:
-            continue
-        cutoff = max(1, student_attempts - 2)
-        correct = sum(1 for (s, _ts) in items_map.values() if s == 100)
-        if correct < cutoff:
-            continue
+    # Build per-(user, scale, window) → {rank: True/False/None}
+    per_uvs: dict[tuple, dict[int, "bool|None"]] = defaultdict(
+        lambda: {1: None, 2: None, 3: None, 4: None}
+    )
+    for (uid, lp, win, mod), items_map in best.items():
         rank = MODULE_RANK.get(mod, 0)
         if rank == 0:
+            continue  # unknown module code
+        attempted = len(items_map)
+        if attempted == 0:
             continue
+        cutoff = max(1, attempted - 2)
+        correct = sum(1 for s in items_map.values() if s == 100)
+        passed = correct >= cutoff
         key = (user_idx[uid], scale_idx[lp], window_idx[win])
-        if rank > user_scale_window[key]:
-            user_scale_window[key] = rank
-            promoted += 1
-    passed_count = sum(1 for r in user_scale_window.values() if r > 0)
+        # If a rank was attempted multiple times (e.g., separate L1+L2YO), prefer pass over fail
+        prev = per_uvs[key][rank]
+        if prev is None:
+            per_uvs[key][rank] = passed
+        else:
+            per_uvs[key][rank] = prev or passed
+
+    def learning_zone(per_rank: dict) -> int:
+        # First failed module wins
+        for r in (1, 2, 3, 4):
+            if per_rank[r] is False:
+                return r
+        # No fails. Find highest passed rank (some may be None if not attempted).
+        highest = 0
+        for r in (1, 2, 3, 4):
+            if per_rank[r] is True:
+                highest = r
+        if highest == 0:
+            return 0  # nothing attempted (shouldn't happen since per_uvs only has entries when something was)
+        return min(4, highest + 1)
+
+    user_scale_window: dict[tuple[int, int, int], int] = {}
+    for key, per_rank in per_uvs.items():
+        user_scale_window[key] = learning_zone(per_rank)
+    passed_any = sum(1 for r in user_scale_window.values() if r > 0)
     print(
-        f"  attempted (user, scale, window) entries: {len(user_scale_window):,} "
-        f"({passed_count:,} passed at least one module)"
+        f"  (user, scale, window) entries with a Learning Zone: {len(user_scale_window):,} "
+        f"({passed_any:,} non-zero)"
     )
 
     # Build output
