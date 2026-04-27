@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Raw item-level exports — too large to commit. Keep them outside the repo and
+# pass the path to build/preprocess.py via --items.
+data/analytics_*.csv
+data/items*.csv
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc

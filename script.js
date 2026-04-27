@@ -1,14 +1,221 @@
 'use strict';
 
 /* ============================================================
-   DATA
+   DATA — REAL DATA LAYER
+   computed.json is produced by build/preprocess.py from the
+   raw items + roster CSVs. All visible numbers in the prototype
+   are derived from this in-memory dataset.
    ============================================================ */
 
-const TOTAL = 150;
 const DOMAINS = ['Overview', 'Math', 'Literacy', 'Language', 'Executive Function'];
+const SKILL_DOMAINS = ['Math', 'Literacy', 'Language', 'Executive Function'];
+
+// CD = Computed Data, populated by loadComputed() at startup.
+const CD = {
+  raw: null,                // full computed.json contents
+  ready: false,             // true once loaded
+  // Indices built after load:
+  windowIdx: {},            // 'Fall 2025' -> 0
+  scaleByIdx: [],           // [{leaf_path, code, name, domain, language}]
+  scaleIdxByPath: {},       // leaf_path -> index
+  scalesByDomain: {},       // 'Math' -> [scale_idx, ...]
+  classByGroup: {},         // group_id -> {name, grade, school_id}
+  schoolBySid: {},          // school_id -> {name, district_id}
+  studentByIdx: [],         // [{user_id, name, group_id, school_id, district_id, language}]
+  studentIdxByUid: {},      // user_id -> idx
+  studentsByGroup: {},      // group_id -> [user_idx, ...]
+  studentsBySchool: {},     // school_id -> [user_idx, ...]
+  studentsByDistrict: {},   // district_id -> [user_idx, ...]
+  // Pre-grouped levels for fast lookup:
+  // levelsByUser[user_idx] = [{w: window_idx, s: scale_idx, r: rank}, ...]
+  levelsByUser: [],
+};
+
+// Aggregate a set of student indices into a counts array
+// [na_count, age2_count, age3_count, age4_count, kinder_count] for a given scope.
+//
+// scaleSel: null/'Overview' (median across ALL scales attempted),
+//           a domain name string (median across scales in that domain),
+//           or a number (specific scale_idx).
+// windowName: 'All assessment windows' or a specific window like 'Fall 2025'.
+// languageFilter: 'EN' | 'SP' | 'All' | 'English' | 'Spanish' (UI label form).
+// gradeFilter: 'Pre-K 3' | 'Pre-K 4' | 'Kindergarten' | 'All grades'.
+function aggregateLevels(userIndices, scaleSel, windowName, languageFilter, gradeFilter) {
+  const counts = [0, 0, 0, 0, 0];
+  if (!CD.ready) return counts;
+  const allWindows = !windowName || windowName === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[windowName];
+  if (!allWindows && winIdx === undefined) return counts;
+  const useDomain = typeof scaleSel === 'string' && scaleSel && scaleSel !== 'Overview';
+  const useScale = typeof scaleSel === 'number';
+  const domainScales = useDomain ? new Set(CD.scalesByDomain[scaleSel] || []) : null;
+  // Normalize language filter to internal code form ('EN'/'SP'/'All').
+  const langCode = languageFilter === 'English' ? 'EN'
+                 : languageFilter === 'Spanish' ? 'SP'
+                 : languageFilter || 'All';
+
+  for (const ui of userIndices) {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) continue;
+    if (langCode && langCode !== 'All' && stu.language !== langCode) continue;
+    if (gradeFilter && gradeFilter !== 'All grades') {
+      const c = CD.classByGroup[stu.group_id];
+      if (!c || c.grade !== gradeFilter) continue;
+    }
+
+    const userLevels = CD.levelsByUser[ui] || [];
+    const ranks = [];
+    for (const lvl of userLevels) {
+      if (lvl.r === 0) continue; // skip attempts that didn't pass a module — SL only medians passes
+      if (winIdx !== null && lvl.w !== winIdx) continue;
+      if (useScale && lvl.s !== scaleSel) continue;
+      if (useDomain && !domainScales.has(lvl.s)) continue;
+      ranks.push(lvl.r);
+    }
+    let level = 0; // not assessed
+    if (ranks.length > 0) {
+      ranks.sort((a, b) => a - b);
+      // Lower median for ties (matches the SPEC's "median" rollup intent).
+      level = ranks[Math.floor((ranks.length - 1) / 2)];
+    }
+    counts[level]++;
+  }
+  return counts;
+}
+
+// Domain completion threshold (fraction of scales required to be considered "Complete").
+// SPEC values cluster around 70%; using a single fraction here as a placeholder until
+// the per-(domain, grade) thresholds are confirmed.
+const COMPLETION_THRESHOLD_FRACTION = 0.7;
+
+function scalesInDomain(domain, language) {
+  if (!CD.ready) return [];
+  const figmaLang = language === 'EN' ? 'English' : language === 'SP' ? 'Spanish' : null;
+  return (CD.scalesByDomain[domain] || []).filter(idx => {
+    if (!figmaLang) return true;
+    return CD.scaleByIdx[idx].language === figmaLang;
+  });
+}
+
+// Aggregate Assessment Completion: returns [notStarted, inProgress, completed] counts.
+// "Completed" = student passed >= ceil(THRESHOLD × scales-in-domain) scales.
+// "Not Started" = student attempted 0 scales in domain.
+// "In Progress" = anything between.
+function aggregateCompletion(userIndices, domain, windowName, languageFilter, gradeFilter) {
+  const counts = [0, 0, 0]; // not-started, in-progress, completed
+  if (!CD.ready) return counts;
+  const allWindows = !windowName || windowName === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[windowName];
+  if (!allWindows && winIdx === undefined) return counts;
+  const langCode = languageFilter === 'English' ? 'EN'
+                 : languageFilter === 'Spanish' ? 'SP'
+                 : languageFilter || 'All';
+
+  for (const ui of userIndices) {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) continue;
+    if (langCode !== 'All' && stu.language !== langCode) continue;
+    if (gradeFilter && gradeFilter !== 'All grades') {
+      const c = CD.classByGroup[stu.group_id];
+      if (!c || c.grade !== gradeFilter) continue;
+    }
+    // Per-student language: scales eligible for this student
+    const eligibleScales = new Set(scalesInDomain(domain, stu.language));
+    const required = Math.ceil(eligibleScales.size * COMPLETION_THRESHOLD_FRACTION);
+
+    let attempted = 0;
+    let passed = 0;
+    const userLevels = CD.levelsByUser[ui] || [];
+    const seenScales = new Set();
+    for (const lvl of userLevels) {
+      if (winIdx !== null && lvl.w !== winIdx) continue;
+      if (!eligibleScales.has(lvl.s)) continue;
+      if (seenScales.has(lvl.s)) continue;
+      seenScales.add(lvl.s);
+      attempted++;
+      if (lvl.r > 0) passed++;
+    }
+    if (attempted === 0) counts[0]++;
+    else if (passed >= required && required > 0) counts[2]++;
+    else counts[1]++;
+  }
+  return counts;
+}
+
+// Aggregate Grade-Level Readiness (Student Placement): returns [notAssessed, needSupport, progressing, onTrack].
+// Compares student's median domain rank vs their enrolled-grade rank.
+const GRADE_TO_RANK = { 'Pre-K 2': 1, 'Pre-K 3': 2, 'Pre-K 4': 3, 'Kindergarten': 4 };
+function aggregateReadiness(userIndices, domain, windowName, languageFilter) {
+  const counts = [0, 0, 0, 0]; // notAssessed, needSupport, progressing, onTrack
+  if (!CD.ready) return counts;
+  const allWindows = !windowName || windowName === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[windowName];
+  if (!allWindows && winIdx === undefined) return counts;
+  const langCode = languageFilter === 'English' ? 'EN'
+                 : languageFilter === 'Spanish' ? 'SP'
+                 : languageFilter || 'All';
+  const useDomain = domain && domain !== 'Overview';
+  const domainScales = useDomain ? new Set(CD.scalesByDomain[domain] || []) : null;
+
+  for (const ui of userIndices) {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) continue;
+    if (langCode !== 'All' && stu.language !== langCode) continue;
+    const cls = CD.classByGroup[stu.group_id];
+    const gradeRank = cls ? GRADE_TO_RANK[cls.grade] : null;
+    if (!gradeRank) { counts[0]++; continue; }
+
+    // Median rank across passed scales in this domain (within window)
+    const ranks = [];
+    for (const lvl of (CD.levelsByUser[ui] || [])) {
+      if (lvl.r === 0) continue;
+      if (winIdx !== null && lvl.w !== winIdx) continue;
+      if (useDomain && !domainScales.has(lvl.s)) continue;
+      ranks.push(lvl.r);
+    }
+    if (ranks.length === 0) { counts[0]++; continue; }
+    ranks.sort((a, b) => a - b);
+    const studentRank = ranks[Math.floor((ranks.length - 1) / 2)];
+
+    if (studentRank < gradeRank) counts[1]++;       // need support
+    else if (studentRank === gradeRank) counts[2]++; // progressing
+    else counts[3]++;                                // on track
+  }
+  return counts;
+}
+
+async function loadComputed() {
+  const r = await fetch('data/computed.json');
+  CD.raw = await r.json();
+  // Build indices
+  CD.raw.windows.forEach((w, i) => { CD.windowIdx[w] = i; });
+  CD.scaleByIdx = CD.raw.scales;
+  CD.raw.scales.forEach((sc, i) => {
+    CD.scaleIdxByPath[sc.leaf_path] = i;
+    if (sc.domain) {
+      (CD.scalesByDomain[sc.domain] = CD.scalesByDomain[sc.domain] || []).push(i);
+    }
+  });
+  for (const c of CD.raw.classes) CD.classByGroup[c.group_id] = c;
+  for (const s of CD.raw.schools) CD.schoolBySid[s.school_id] = s;
+  CD.studentByIdx = CD.raw.students;
+  CD.raw.students.forEach((s, i) => {
+    CD.studentIdxByUid[s.user_id] = i;
+    (CD.studentsByGroup[s.group_id] = CD.studentsByGroup[s.group_id] || []).push(i);
+    (CD.studentsBySchool[s.school_id] = CD.studentsBySchool[s.school_id] || []).push(i);
+    (CD.studentsByDistrict[s.district_id] = CD.studentsByDistrict[s.district_id] || []).push(i);
+  });
+  CD.levelsByUser = CD.raw.students.map(() => []);
+  for (const [u, s, w, r] of CD.raw.levels) {
+    if (CD.levelsByUser[u]) CD.levelsByUser[u].push({ s, w, r });
+  }
+  CD.ready = true;
+}
 
 // Student Levels: [notAssessed, age2, age3, age4, kinder]  (% of TOTAL)
-const SL = {
+// SL is rebuilt from CD on every render via refreshSL() once computed.json loads.
+// The hardcoded values below are placeholders shown briefly during the initial fetch.
+let SL = {
   domain: {
     'Overview':           [20, 40, 20, 15,  5],
     'Math':               [20, 20, 40, 10, 10],
@@ -115,8 +322,9 @@ const SL = {
 };
 
 // Per-window data for "All assessment windows" mode
-const SL_WINDOWS = ['Fall 2026', 'Winter 2026', 'Spring 2027'];
-const SL_CURRENT_WINDOW = 'Spring 2027';
+// Real windows derived from data are filled in by refreshSL().
+let SL_WINDOWS = ['Fall 2025', 'Winter 2025', 'Spring 2026'];
+let SL_CURRENT_WINDOW = 'Spring 2026';
 const SL_WINDOW_DATA = {
   domain: {
     'Fall 2026':   [12, 28, 26, 18, 16],
@@ -258,12 +466,12 @@ const state = {
   report: 'student-levels',
   role: 'district',   // 'district' | 'school'
   filters: {
-    window: 'Spring 2027',
+    window: 'Spring 2026',  // most-recent real window (overridden after CD loads)
     domain: 'Overview',
     language: 'All',
     school: 'All',
     cls: 'All',
-    grade: 'Pre-K 4',
+    grade: 'All grades',
   },
   sl: { level: 0, path: [], showAvg: false, expandedRows: new Set() },
   ac: { level: 0, path: [] },
@@ -283,9 +491,12 @@ function esc(s) {
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function pct(val) { return `${val}%`; }
-function count(val) { return `${Math.round(val / 100 * TOTAL)} of ${TOTAL}`; }
-function pillLabel(val) { return `${val}% (${count(val)})`; }
+// vals are now COUNTS per level [na, age2, age3, age4, kinder].
+// pillLabel takes (count, total) and returns "20% (30 of 150)".
+function pillLabel(c, total) {
+  const p = total > 0 ? Math.round((c / total) * 100) : 0;
+  return `${p}% (${c} of ${total})`;
+}
 
 // Returns index (1–4) of the highest non-zero skill column
 function hiIdx(vals) {
@@ -338,12 +549,12 @@ function makeAvgBar(vals) {
     </td>`;
 }
 
-function makePill(val, idx, hi, colLabel) {
+function makePill(val, total, idx, hi, colLabel) {
   const t = PILL_TYPES[idx];
   const hiClass = hi ? ' hi' : '';
   const label = colLabel || COL_LABELS[idx];
   // Every pill (including Not Assessed) is clickable; opens the detail popup for that column.
-  return `<span class="pill pill-${t}${hiClass}" data-action="openPopup" data-col="${esc(label)}" data-val="${val}">${pillLabel(val)}</span>`;
+  return `<span class="pill pill-${t}${hiClass}" data-action="openPopup" data-col="${esc(label)}" data-val="${val}" data-total="${total}">${pillLabel(val, total)}</span>`;
 }
 
 function makeBar(segs) {
@@ -405,11 +616,20 @@ function renderFilterCard() {
   };
 
   const isSchoolAdmin = state.role === 'school';
-  // School admins always have school pre-filled; class is always enabled for them
-  const effectiveSchool = isSchoolAdmin ? 'School E' : f.school;
+  // School admins always have school pre-filled (first school in the data) and class is enabled
+  const schoolNames = (CD.raw && CD.raw.schools || []).map(s => s.name);
+  const adminSchool = schoolNames[0] || 'All';
+  const effectiveSchool = isSchoolAdmin ? adminSchool : f.school;
   const classEnabled = !locked && (isSchoolAdmin || effectiveSchool !== 'All');
-  const schools = ['All','School A','School B','School C','School D','School E','School F'];
-  const classes = classEnabled ? ['All','Class 1A','Class 1B','Class 2A'] : ['All'];
+  const schools = ['All', ...schoolNames];
+  // Class options are filtered to the currently-selected school (if any)
+  let classes = ['All'];
+  if (classEnabled && CD.raw && CD.raw.classes) {
+    const selSchool = (CD.raw.schools || []).find(s => s.name === effectiveSchool);
+    if (selSchool) {
+      classes = ['All', ...CD.raw.classes.filter(c => c.school_id === selSchool.school_id).map(c => c.name)];
+    }
+  }
   const schoolDisabled = isSchoolAdmin || locked ? 'disabled' : '';
 
   const domainDisabled = isAC ? 'disabled' : '';
@@ -437,7 +657,7 @@ function renderFilterCard() {
       <div class="filter-row">
         <div class="filter-group">
           <label>Assessment Window</label>
-          ${sel('window', ['All assessment windows','Spring 2027','Fall 2026','Winter 2026'], f.window)}
+          ${sel('window', ['All assessment windows', ...SL_WINDOWS], f.window)}
         </div>
         <div class="filter-group">
           <label>Select domain</label>
@@ -514,9 +734,11 @@ function renderToolbar(showToggle = true) {
    ============================================================ */
 
 function slDataCells(vals) {
+  // vals = counts [na, age2, age3, age4, kinder]
   if (state.sl.showAvg) return makeAvgBar(vals);
+  const total = vals.reduce((a, b) => a + b, 0);
   const hi = hiIdx(vals);
-  return vals.map((v, i) => `<td>${makePill(v, i, i === hi)}</td>`).join('');
+  return vals.map((v, i) => `<td>${makePill(v, total, i, i === hi)}</td>`).join('');
 }
 
 function slTheadCells() {
@@ -528,16 +750,18 @@ function slTheadCells() {
     <th class="col-kinder">Kindergarten Skills</th>`;
 }
 
-function renderWindowSubRows(type) {
+function renderWindowSubRows(getCounts) {
+  // getCounts: (windowName) => 5-element counts array [na, age2, age3, age4, kinder]
   return SL_WINDOWS.map(win => {
     const isCurrent = win === SL_CURRENT_WINDOW;
-    const vals = SL_WINDOW_DATA[type][win];
+    const vals = getCounts(win);
     const hi = hiIdx(vals);
+    const total = vals.reduce((a, b) => a + b, 0);
     return `<tr class="sub-row show window-sub-row">
       <td class="window-sub-label">
         ${esc(win)}${isCurrent ? `<span class="star-badge">&#9733;</span>` : ''}
       </td>
-      ${vals.map((v,i) => `<td style="text-align:center;padding:0 6px;">${makePill(v,i,i===hi)}</td>`).join('')}
+      ${vals.map((v,i) => `<td style="text-align:center;padding:0 6px;">${makePill(v, total, i, i===hi)}</td>`).join('')}
     </tr>`;
   }).join('');
 }
@@ -550,14 +774,20 @@ function renderSL_L0() {
 
   let rows, colHeader;
 
+  const f = state.filters;
+  const scope = l0ScopeStudents();
   if (isStandardsMode) {
     // Show standards for the selected domain
     const standards = SL.domainStandards[selectedDomain] || [];
     colHeader = 'Standard';
     rows = standards.map(std => {
-      const vals = SL.standard[std] || [20, 20, 20, 20, 20];
+      const vals = SL.standard[std] || [0, 0, 0, 0, 0];
       const isExpanded = isAllWindows && state.sl.expandedRows.has(std);
-      const subRowsHtml = isExpanded ? renderWindowSubRows('domain') : '';
+      // Find scale_idx for this code so per-window aggregation works
+      const scIdx = (CD.scalesByDomain[selectedDomain] || []).find(idx => CD.scaleByIdx[idx].code === std);
+      const subRowsHtml = isExpanded
+        ? renderWindowSubRows(win => aggregateLevels(scope, scIdx, win, f.language, f.grade))
+        : '';
       return `<tr>
         <td>
           <div class="dom-cell">
@@ -572,9 +802,11 @@ function renderSL_L0() {
     // Overview mode: show all domains. Rows are only expandable when "All assessment windows" is selected.
     colHeader = 'Domain';
     rows = DOMAINS.map(domain => {
-      const vals = SL.domain[domain];
+      const vals = SL.domain[domain] || [0, 0, 0, 0, 0];
       const isExpanded = isAllWindows && state.sl.expandedRows.has(domain);
-      const subRowsHtml = isExpanded ? renderWindowSubRows('domain') : '';
+      const subRowsHtml = isExpanded
+        ? renderWindowSubRows(win => aggregateLevels(scope, domain, win, f.language, f.grade))
+        : '';
       return `<tr data-domain="${esc(domain)}">
         <td>
           <div class="dom-cell">
@@ -615,9 +847,10 @@ function renderSubRows(domain) {
   return names.map(n => {
     const vals = subs.length ? SL.standard[n] : SL.domain[domain].map(v => Math.round(v * (0.85 + Math.random()*0.3)));
     const hi = hiIdx(vals);
+    const total = vals.reduce((a, b) => a + b, 0);
     return `<tr class="sub-row show">
       <td class="window-sub-label" style="color:var(--grey-500);font-weight:400;">${esc(n)}</td>
-      ${vals.map((v,i) => `<td style="text-align:center;padding:0 6px;">${makePill(v,i,i===hi)}</td>`).join('')}
+      ${vals.map((v,i) => `<td style="text-align:center;padding:0 6px;">${makePill(v, total, i, i===hi)}</td>`).join('')}
     </tr>`;
   }).join('');
 }
@@ -625,10 +858,13 @@ function renderSubRows(domain) {
 // L1 – Schools list (after clicking a domain)
 function renderSL_L1(path) {
   const isAllWindows = state.filters.window === 'All assessment windows';
-  const schoolOrder = ['District','School E','School F','School B','School A','School C','School D'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  // District row first, then real schools from CD
+  const schoolOrder = ['District', ...((CD.raw && CD.raw.schools) || []).map(s => s.name)];
 
   const rows = schoolOrder.flatMap(name => {
-    const vals = SL.schools[name] || SL.schools['District'];
+    const vals = SL.schools[name] || [0, 0, 0, 0, 0];
     const isDistrict = name === 'District';
     const isExpanded = !isDistrict && isAllWindows && state.sl.expandedRows.has(name);
 
@@ -647,7 +883,10 @@ function renderSL_L1(path) {
     </tr>`;
 
     if (!isExpanded) return [mainRow];
-    return [mainRow, renderWindowSubRows('schools')];
+    const schObj = (CD.raw && CD.raw.schools || []).find(s => s.name === name);
+    const stuIndices = schObj ? (CD.studentsBySchool[schObj.school_id] || []) : [];
+    const subRows = renderWindowSubRows(win => aggregateLevels(stuIndices, drilledDomain, win, f.language, f.grade));
+    return [mainRow, subRows];
   }).join('');
 
   return `
@@ -670,12 +909,20 @@ function renderSL_L1(path) {
 // L2 – Classes list (after clicking a school)
 function renderSL_L2(path) {
   const isAllWindows = state.filters.window === 'All assessment windows';
-  const school = path[1].label;
-  const classOrder = [`${school} total`, 'Class 1A', 'Class 1B', 'Class 2A'];
+  const f = state.filters;
+  // path = [domain, 'District' literal, school]
+  const drilledDomain = path[0].label;
+  const school = path[2] ? path[2].label : path[1].label;
+  // Look up the school's classes from CD
+  const schObj = (CD.raw && CD.raw.schools || []).find(s => s.name === school);
+  const schoolClasses = schObj
+    ? (CD.raw.classes || []).filter(c => c.school_id === schObj.school_id).map(c => c.name)
+    : [];
+  const classOrder = [`${school} total`, ...schoolClasses];
 
   const rows = classOrder.flatMap(name => {
-    const vals = SL.classes[name] || SL.classes['School E total'];
-    const isTotal = name.includes('total');
+    const vals = SL.classes[name] || [0, 0, 0, 0, 0];
+    const isTotal = name === `${school} total`;
     const displayName = isTotal ? school : name;
     const isExpanded = !isTotal && isAllWindows && state.sl.expandedRows.has(name);
 
@@ -694,7 +941,10 @@ function renderSL_L2(path) {
     </tr>`;
 
     if (!isExpanded) return [mainRow];
-    return [mainRow, renderWindowSubRows('classes')];
+    const cls = (CD.raw && CD.raw.classes || []).find(c => c.name === name);
+    const stuIndices = cls ? (CD.studentsByGroup[cls.group_id] || []) : [];
+    const subRows = renderWindowSubRows(win => aggregateLevels(stuIndices, drilledDomain, win, f.language, f.grade));
+    return [mainRow, subRows];
   }).join('');
 
   return `
@@ -814,11 +1064,14 @@ function renderSL_L3(path) {
    RENDER: ASSESSMENT COMPLETION
    ============================================================ */
 function acBar(vals) {
+  // vals = counts [notStarted, inProgress, completed]
   const [ns, ip, cp] = vals;
+  const total = ns + ip + cp;
+  const pct = c => total > 0 ? Math.round((c / total) * 100) : 0;
   return makeBar([
-    { cls: 'seg-grey',   flex: ns, label: `${ns}%` },
-    { cls: 'seg-yellow', flex: ip, label: `${ip}%` },
-    { cls: 'seg-green',  flex: cp, label: `${cp}%` },
+    { cls: 'seg-grey',   flex: ns, label: `${pct(ns)}%` },
+    { cls: 'seg-yellow', flex: ip, label: `${pct(ip)}%` },
+    { cls: 'seg-green',  flex: cp, label: `${pct(cp)}%` },
   ]);
 }
 
@@ -838,8 +1091,10 @@ function renderACLegend() {
 
 // L0 – Domains
 function renderAC_L0() {
+  const f = state.filters;
+  const scope = l0ScopeStudents();
   const rows = DOMAINS.map(d => {
-    const vals = AC.domain[d];
+    const vals = aggregateCompletion(scope, d, f.window, f.language, f.grade);
     return `<tr>
       <td><span class="bar-label" data-action="ac-drill-domain:${esc(d)}">${esc(d)}</span></td>
       <td>${acBar(vals)}</td>
@@ -859,10 +1114,19 @@ function renderAC_L0() {
 
 // L1 – Schools
 function renderAC_L1(path) {
-  const schoolOrder = ['District','School E','School F','School B','School A','School C','School D'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  const schoolOrder = ['District', ...((CD.raw && CD.raw.schools) || []).map(s => s.name)];
+  const allScope = l0ScopeStudents();
   const rows = schoolOrder.map(name => {
-    const vals = AC.schools[name] || AC.schools['District'];
     const isDistrict = name === 'District';
+    const stuIndices = isDistrict
+      ? allScope
+      : ((() => {
+          const sch = (CD.raw && CD.raw.schools || []).find(s => s.name === name);
+          return sch ? (CD.studentsBySchool[sch.school_id] || []) : [];
+        })());
+    const vals = aggregateCompletion(stuIndices, drilledDomain, f.window, f.language, f.grade);
     return `<tr ${isDistrict ? 'class="pinned"' : ''}>
       <td>
         <div class="bar-label">
@@ -894,12 +1158,27 @@ function renderAC_L1(path) {
 
 // L2 – Classes
 function renderAC_L2(path) {
-  const school = path[1].label;
-  const classOrder = [`${school} total`, 'Class 1A', 'Class 1B', 'Class 2A'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  // path = [domain, 'District' literal, school]
+  const school = path[2] ? path[2].label : path[1].label;
+  const schObj = (CD.raw && CD.raw.schools || []).find(s => s.name === school);
+  const schoolStudents = schObj ? (CD.studentsBySchool[schObj.school_id] || []) : [];
+  const schoolClasses = schObj
+    ? (CD.raw.classes || []).filter(c => c.school_id === schObj.school_id).map(c => c.name)
+    : [];
+  const classOrder = [`${school} total`, ...schoolClasses];
+
   const rows = classOrder.map(name => {
-    const vals = AC.classes[name] || AC.classes['School E total'];
-    const isTotal = name.includes('total');
+    const isTotal = name === `${school} total`;
     const displayName = isTotal ? school : name;
+    const stuIndices = isTotal
+      ? schoolStudents
+      : ((() => {
+          const cls = (CD.raw && CD.raw.classes || []).find(c => c.name === name);
+          return cls ? (CD.studentsByGroup[cls.group_id] || []) : [];
+        })());
+    const vals = aggregateCompletion(stuIndices, drilledDomain, f.window, f.language, f.grade);
     return `<tr ${isTotal ? 'class="pinned"' : ''}>
       <td>
         <div class="bar-label">
@@ -931,8 +1210,12 @@ function renderAC_L2(path) {
 
 // L3 – Students
 function renderAC_L3(path) {
-  const cls = path[2].label;
-  const students = AC.students[cls] || AC.students['Class 1A'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  // path = [domain, 'District', school, class]
+  const cls = path[3] ? path[3].label : path[2].label;
+  const clsObj = (CD.raw && CD.raw.classes || []).find(c => c.name === cls);
+  const stuIndices = clsObj ? (CD.studentsByGroup[clsObj.group_id] || []) : [];
 
   const statusMap = {
     'not-started': { cls: 'not-started', dot: 'not-started', label: 'Not started' },
@@ -940,10 +1223,35 @@ function renderAC_L3(path) {
     'completed':   { cls: 'completed',   dot: 'completed',   label: 'Completed' },
   };
 
-  const rows = students.map(s => {
-    const st = statusMap[s.status];
+  const allWindows = !f.window || f.window === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[f.window];
+  const langCode = f.language === 'English' ? 'EN' : f.language === 'Spanish' ? 'SP' : 'All';
+
+  const rows = stuIndices.map(ui => {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) return '';
+    if (langCode !== 'All' && stu.language !== langCode) return '';
+
+    // Compute per-student completion status for the drilled domain
+    const eligible = new Set(scalesInDomain(drilledDomain, stu.language));
+    const required = Math.ceil(eligible.size * COMPLETION_THRESHOLD_FRACTION);
+    let attempted = 0, passed = 0;
+    const seen = new Set();
+    for (const lvl of (CD.levelsByUser[ui] || [])) {
+      if (winIdx !== null && lvl.w !== winIdx) continue;
+      if (!eligible.has(lvl.s)) continue;
+      if (seen.has(lvl.s)) continue;
+      seen.add(lvl.s);
+      attempted++;
+      if (lvl.r > 0) passed++;
+    }
+    const status = attempted === 0 ? 'not-started'
+                 : (passed >= required && required > 0) ? 'completed'
+                 : 'in-progress';
+
+    const st = statusMap[status];
     return `<tr>
-      <td>${makeAvatar(s.name)} &nbsp; ${esc(s.name)}</td>
+      <td>${makeAvatar(stu.name)} &nbsp; ${esc(stu.name)}</td>
       <td>
         <span class="status-badge status-${st.cls}">
           <span class="status-dot dot-${st.dot}"></span>
@@ -974,12 +1282,15 @@ function renderAC_L3(path) {
    RENDER: STUDENT PLACEMENT
    ============================================================ */
 function spBar(vals) {
+  // vals = counts [notAssessed, needSupport, progressing, onTrack]
   const [na, ns, pr, ot] = vals;
+  const total = na + ns + pr + ot;
+  const pct = c => total > 0 ? Math.round((c / total) * 100) : 0;
   return makeBar([
-    { cls: 'seg-grey',   flex: na, label: `${na}%` },
-    { cls: 'seg-red',    flex: ns, label: `${ns}%` },
-    { cls: 'seg-yellow', flex: pr, label: `${pr}%` },
-    { cls: 'seg-green',  flex: ot, label: `${ot}%` },
+    { cls: 'seg-grey',   flex: na, label: `${pct(na)}%` },
+    { cls: 'seg-red',    flex: ns, label: `${pct(ns)}%` },
+    { cls: 'seg-yellow', flex: pr, label: `${pct(pr)}%` },
+    { cls: 'seg-green',  flex: ot, label: `${pct(ot)}%` },
   ]);
 }
 
@@ -1000,8 +1311,10 @@ function renderSPLegend() {
 
 // L0 – Domains
 function renderSP_L0() {
+  const f = state.filters;
+  const scope = l0ScopeStudents();
   const rows = DOMAINS.map(d => {
-    const vals = SP.domain[d];
+    const vals = aggregateReadiness(scope, d, f.window, f.language);
     return `<tr>
       <td><span class="bar-label" data-action="sp-drill-domain:${esc(d)}">${esc(d)}</span></td>
       <td>${spBar(vals)}</td>
@@ -1021,10 +1334,19 @@ function renderSP_L0() {
 
 // L1 – Schools
 function renderSP_L1(path) {
-  const schoolOrder = ['District','School E','School F','School B','School A','School C','School D'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  const schoolOrder = ['District', ...((CD.raw && CD.raw.schools) || []).map(s => s.name)];
+  const allScope = l0ScopeStudents();
   const rows = schoolOrder.map(name => {
-    const vals = SP.schools[name] || SP.schools['District'];
     const isDistrict = name === 'District';
+    const stuIndices = isDistrict
+      ? allScope
+      : ((() => {
+          const sch = (CD.raw && CD.raw.schools || []).find(s => s.name === name);
+          return sch ? (CD.studentsBySchool[sch.school_id] || []) : [];
+        })());
+    const vals = aggregateReadiness(stuIndices, drilledDomain, f.window, f.language);
     return `<tr ${isDistrict ? 'class="pinned"' : ''}>
       <td>
         <div class="bar-label">
@@ -1056,12 +1378,26 @@ function renderSP_L1(path) {
 
 // L2 – Classes
 function renderSP_L2(path) {
-  const school = path[1].label;
-  const classOrder = [`${school} total`, 'Class 1A', 'Class 1B', 'Class 2A'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  const school = path[2] ? path[2].label : path[1].label;
+  const schObj = (CD.raw && CD.raw.schools || []).find(s => s.name === school);
+  const schoolStudents = schObj ? (CD.studentsBySchool[schObj.school_id] || []) : [];
+  const schoolClasses = schObj
+    ? (CD.raw.classes || []).filter(c => c.school_id === schObj.school_id).map(c => c.name)
+    : [];
+  const classOrder = [`${school} total`, ...schoolClasses];
+
   const rows = classOrder.map(name => {
-    const vals = SP.classes[name] || SP.classes['School E total'];
-    const isTotal = name.includes('total');
+    const isTotal = name === `${school} total`;
     const displayName = isTotal ? school : name;
+    const stuIndices = isTotal
+      ? schoolStudents
+      : ((() => {
+          const cls = (CD.raw && CD.raw.classes || []).find(c => c.name === name);
+          return cls ? (CD.studentsByGroup[cls.group_id] || []) : [];
+        })());
+    const vals = aggregateReadiness(stuIndices, drilledDomain, f.window, f.language);
     return `<tr ${isTotal ? 'class="pinned"' : ''}>
       <td>
         <div class="bar-label">
@@ -1093,15 +1429,18 @@ function renderSP_L2(path) {
 
 // L3 – Students
 function renderSP_L3(path) {
-  const cls = path[2].label;
-  const students = SP.students[cls] || SP.students['Class 1A'];
+  const f = state.filters;
+  const drilledDomain = path[0].label;
+  // path = [domain, 'District', school, class]
+  const cls = path[3] ? path[3].label : path[2].label;
+  const clsObj = (CD.raw && CD.raw.classes || []).find(c => c.name === cls);
+  const stuIndices = clsObj ? (CD.studentsByGroup[clsObj.group_id] || []) : [];
 
-  const PLACEMENT_MAP = {
-    'not-assessed': { cls: 'not-started', dot: 'not-started', label: 'Not assessed' },
-    'need-support': { cls: 'in-progress', dot: 'in-progress', label: 'Need support',
-                      style: 'background:#fde8e5;color:#8a1e10;' },
-    'progressing':  { cls: 'in-progress', dot: 'in-progress', label: 'Progressing' },
-    'on-track':     { cls: 'completed',   dot: 'completed',   label: 'On track' },
+  const PLACEMENT_LABELS = {
+    'not-assessed': 'Not assessed',
+    'need-support': 'Need support',
+    'progressing':  'Progressing',
+    'on-track':     'On track',
   };
   const DOT_COLORS = {
     'not-assessed': 'var(--grey-400)',
@@ -1110,20 +1449,48 @@ function renderSP_L3(path) {
     'on-track':     'var(--green)',
   };
 
-  const rows = students.map(s => {
-    const p = s.placement;
-    const label = PLACEMENT_MAP[p].label;
-    const dotColor = DOT_COLORS[p];
-    const badgeCls = p === 'need-support' ? 'status-need-support'
-                   : p === 'progressing'  ? 'status-progressing'
-                   : p === 'on-track'     ? 'status-on-track'
-                   :                        'status-not-started';
+  const allWindows = !f.window || f.window === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[f.window];
+  const langCode = f.language === 'English' ? 'EN' : f.language === 'Spanish' ? 'SP' : 'All';
+  const useDomain = drilledDomain && drilledDomain !== 'Overview';
+  const domainScales = useDomain ? new Set(CD.scalesByDomain[drilledDomain] || []) : null;
+
+  const rows = stuIndices.map(ui => {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) return '';
+    if (langCode !== 'All' && stu.language !== langCode) return '';
+    const cobj = CD.classByGroup[stu.group_id];
+    const gradeRank = cobj ? GRADE_TO_RANK[cobj.grade] : null;
+
+    let placement = 'not-assessed';
+    if (gradeRank) {
+      const ranks = [];
+      for (const lvl of (CD.levelsByUser[ui] || [])) {
+        if (lvl.r === 0) continue;
+        if (winIdx !== null && lvl.w !== winIdx) continue;
+        if (useDomain && !domainScales.has(lvl.s)) continue;
+        ranks.push(lvl.r);
+      }
+      if (ranks.length > 0) {
+        ranks.sort((a, b) => a - b);
+        const studentRank = ranks[Math.floor((ranks.length - 1) / 2)];
+        placement = studentRank < gradeRank ? 'need-support'
+                  : studentRank === gradeRank ? 'progressing'
+                  : 'on-track';
+      }
+    }
+
+    const dotColor = DOT_COLORS[placement];
+    const badgeCls = placement === 'need-support' ? 'status-need-support'
+                   : placement === 'progressing'  ? 'status-progressing'
+                   : placement === 'on-track'     ? 'status-on-track'
+                   :                                'status-not-started';
     return `<tr>
-      <td>${makeAvatar(s.name)} &nbsp; ${esc(s.name)}</td>
+      <td>${makeAvatar(stu.name)} &nbsp; ${esc(stu.name)}</td>
       <td>
         <span class="status-badge ${badgeCls}">
           <span class="status-dot" style="background:${dotColor}"></span>
-          ${label}
+          ${PLACEMENT_LABELS[placement]}
         </span>
       </td>
     </tr>`;
@@ -1198,12 +1565,12 @@ function getPageTitle() {
 
 function getReportTitle() {
   const f = state.filters;
-  const win = f.window === 'Spring 2027' ? 'Spring' : f.window === 'Fall 2026' ? 'Fall' : 'Winter';
-  const year = f.window.includes('2027') ? '2027' : '2026';
+  // Window is "Fall 2025" / "Winter 2025" / "Spring 2026" or "All assessment windows"
+  const winLabel = f.window === 'All assessment windows' ? 'All windows' : f.window;
   const titles = {
-    'student-levels':    `${win} ${year} Student Learning Levels`,
-    'completion':        `${win} ${year} Assessment Completion`,
-    'student-placement': `${win} ${year} Grade-Level Readiness`,
+    'student-levels':    `${winLabel} Student Learning Levels`,
+    'completion':        `${winLabel} Assessment Completion`,
+    'student-placement': `${winLabel} Grade-Level Readiness`,
   };
   return titles[state.report] || '';
 }
@@ -1232,7 +1599,120 @@ function renderWindowBanner() {
 /* ============================================================
    MAIN RENDER
    ============================================================ */
+/* ============================================================
+   REFRESH SL FROM COMPUTED DATA
+   Recomputes the SL.* structures (the same shape as the original
+   hardcoded fixture) on every render based on current filter/drill
+   state. No-op until computed.json finishes loading.
+   ============================================================ */
+function langToFigma(lang) { return lang === 'EN' ? 'English' : lang === 'SP' ? 'Spanish' : 'All'; }
+
+// Returns the student indices in scope for the L0 view, applying school/class filters.
+function l0ScopeStudents() {
+  const f = state.filters;
+  if (!CD.ready) return [];
+  // Class filter wins (most specific)
+  if (f.cls && f.cls !== 'All') {
+    const c = (CD.raw.classes || []).find(c => c.name === f.cls);
+    return c ? (CD.studentsByGroup[c.group_id] || []) : [];
+  }
+  // Effective school: school admin sees just their school
+  let effSchool = f.school;
+  if (state.role === 'school' && CD.raw.schools.length) {
+    effSchool = CD.raw.schools[0].name; // pick first as the school admin's home
+  }
+  if (effSchool && effSchool !== 'All') {
+    const s = (CD.raw.schools || []).find(s => s.name === effSchool);
+    return s ? (CD.studentsBySchool[s.school_id] || []) : [];
+  }
+  return CD.studentByIdx.map((_, i) => i);
+}
+
+function refreshSL() {
+  if (!CD.ready) return;
+  const f = state.filters;
+  const win = f.window;
+  const lang = f.language;
+  const grade = f.grade;
+  const figmaLang = langToFigma(lang);
+  const scope = l0ScopeStudents();
+
+  // Reset SL with the same shape the renderers expect.
+  // L3 (Educator Class Report) still relies on synthetic data — keep prior classReport intact.
+  const prevClassReport = SL.classReport || {};
+  SL = {
+    domain: {},
+    domainStandards: {},
+    mathStandards: [],
+    standard: {},
+    schools: {},
+    classes: {},
+    classReport: prevClassReport,
+  };
+
+  // Build domain rollups for L0 Overview mode
+  SL.domain.Overview = aggregateLevels(scope, 'Overview', win, lang, grade);
+  for (const d of SKILL_DOMAINS) {
+    SL.domain[d] = aggregateLevels(scope, d, win, lang, grade);
+    SL.domainStandards[d] = (CD.scalesByDomain[d] || [])
+      .map(idx => CD.scaleByIdx[idx])
+      .filter(sc => figmaLang === 'All' || sc.language === figmaLang)
+      .map(sc => sc.code);
+  }
+  SL.mathStandards = SL.domainStandards.Math || [];
+
+  // Build per-scale rollups when a specific domain filter is selected (L0 standards mode)
+  if (f.domain && f.domain !== 'Overview' && CD.scalesByDomain[f.domain]) {
+    for (const idx of CD.scalesByDomain[f.domain]) {
+      const sc = CD.scaleByIdx[idx];
+      if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
+      SL.standard[sc.code] = aggregateLevels(scope, idx, win, lang, grade);
+    }
+  }
+
+  // L1 (Schools view): aggregate per-school for the drilled-into domain
+  const drilledDomain = state.sl.level >= 1 ? state.sl.path[0].label : null;
+  if (drilledDomain) {
+    SL.schools.District = aggregateLevels(scope, drilledDomain, win, lang, grade);
+    for (const sch of CD.raw.schools) {
+      const stuIndices = CD.studentsBySchool[sch.school_id] || [];
+      SL.schools[sch.name] = aggregateLevels(stuIndices, drilledDomain, win, lang, grade);
+    }
+  }
+
+  // L2 (Classes view): aggregate per-class for the drilled-into school + domain
+  // path = [domain, 'District' literal, school, class?]
+  const drilledSchool = state.sl.level >= 2 ? (state.sl.path[2] ? state.sl.path[2].label : null) : null;
+  if (drilledDomain && drilledSchool) {
+    const schObj = CD.raw.schools.find(s => s.name === drilledSchool);
+    if (schObj) {
+      const schoolStudents = CD.studentsBySchool[schObj.school_id] || [];
+      SL.classes[`${drilledSchool} total`] = aggregateLevels(
+        schoolStudents, drilledDomain, win, lang, grade
+      );
+      for (const cls of CD.raw.classes) {
+        if (cls.school_id !== schObj.school_id) continue;
+        const stuIndices = CD.studentsByGroup[cls.group_id] || [];
+        SL.classes[cls.name] = aggregateLevels(stuIndices, drilledDomain, win, lang, grade);
+      }
+    }
+  }
+
+  // Update window globals for renderWindowSubRows + the star indicator
+  if (CD.raw.windows.length) {
+    SL_WINDOWS = CD.raw.windows.slice();
+    // "Current" window = the latest (alphabetical sort doesn't work — sort by start month/year)
+    const orderKey = w => {
+      const [season, yr] = w.split(' ');
+      const seasonRank = season === 'Fall' ? 0 : season === 'Winter' ? 1 : 2;
+      return Number(yr) * 10 + seasonRank;
+    };
+    SL_CURRENT_WINDOW = SL_WINDOWS.slice().sort((a, b) => orderKey(b) - orderKey(a))[0];
+  }
+}
+
 function render() {
+  refreshSL();
   const main = document.getElementById('mainContent');
   main.innerHTML = `
     <h1 class="page-title">${esc(getPageTitle())}</h1>
@@ -1415,8 +1895,9 @@ function handleClick(e) {
   // Open Report Details popup
   if (action === 'openPopup') {
     const colLabel = el.dataset.col;
-    const val = el.dataset.val;
-    openDetailPopup(colLabel, val);
+    const val = Number(el.dataset.val);
+    const total = Number(el.dataset.total);
+    openDetailPopup(colLabel, val, total);
     return;
   }
 
@@ -1500,14 +1981,13 @@ function triggerGenerate() {
 }
 
 function resetFilters() {
-  const isAC = state.report === 'completion';
   state.filters = {
-    window:   'Spring 2027',
+    window:   SL_CURRENT_WINDOW || 'Spring 2026',
     domain:   'Overview',
     language: 'All',
     school:   'All',
     cls:      'All',
-    grade:    isAC ? 'All grades' : 'Pre-K 4',
+    grade:    'All grades',
   };
   state.dirty = true;
   render();
@@ -1532,10 +2012,11 @@ const POPUP_STUDENTS = [
 const LEVEL_COLORS = { age2: 'var(--pink-100)', age3: 'var(--purple-100)', age4: 'var(--blue-100)', kinder: 'var(--teal-100)' };
 const LEVEL_TEXT   = { age2: 'var(--pink-500)', age3: 'var(--purple-500)', age4: 'var(--blue-500)', kinder: 'var(--teal-400)' };
 
-function openDetailPopup(colLabel, val) {
+function openDetailPopup(colLabel, val, total) {
   const overlay = document.getElementById('detailPopup');
   document.getElementById('popupTitle').textContent = `${getReportTitle()}: Report Details`;
-  document.getElementById('popupSubtitle').textContent = `${colLabel}: ${val}% (${Math.round(val/100*TOTAL)} of ${TOTAL})`;
+  const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+  document.getElementById('popupSubtitle').textContent = `${colLabel}: ${pct}% (${val} of ${total})`;
 
   const levelKey = colLabel.toLowerCase().replace('age ', 'age').replace(' skills','').replace('kindergarten','kinder');
   const rows = POPUP_STUDENTS.filter(s => s.levelLabel === colLabel || true).slice(0, 10);
@@ -1659,7 +2140,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.role-btn').forEach(b => b.classList.toggle('active', b.dataset.role === role));
     // Reset school/class when switching roles
     if (role === 'school') {
-      state.filters.school = 'School E';
+      state.filters.school = (CD.raw && CD.raw.schools && CD.raw.schools[0]) ? CD.raw.schools[0].name : 'All';
       state.filters.cls = 'All';
     } else {
       state.filters.school = 'All';
@@ -1702,5 +2183,23 @@ document.addEventListener('DOMContentLoaded', () => {
   // Wire delegated listeners on #mainContent ONCE (they survive re-renders since
   // render() only replaces innerHTML, not the #mainContent element itself).
   wireEvents();
+
+  // Initial render with placeholder data, then re-render once computed.json arrives.
   render();
+  loadComputed()
+    .then(() => {
+      // Snap initial filter window to the most-recent real window so users see data immediately.
+      if (CD.raw && CD.raw.windows.length) {
+        const order = w => {
+          const [season, yr] = w.split(' ');
+          return Number(yr) * 10 + (season === 'Fall' ? 0 : season === 'Winter' ? 1 : 2);
+        };
+        const newest = CD.raw.windows.slice().sort((a, b) => order(b) - order(a))[0];
+        if (state.filters.window !== newest) state.filters.window = newest;
+      }
+      render();
+    })
+    .catch(err => {
+      console.error('Failed to load computed.json:', err);
+    });
 });
