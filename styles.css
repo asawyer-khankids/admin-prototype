@@ -131,61 +131,72 @@ body {
   height: auto; display: block;
 }
 
-nav { flex: 1; padding: 8px 0 20px; }
+nav { flex: 1; padding: 8px 8px 20px; }
 
+/* Nav items — spec: Figma Item/nav/* (8px padding, 8px radius, indigo-200 hover/active) */
 .nav-top {
-  padding: 8px 14px 8px 16px;
-  display: flex; align-items: center; gap: 10px;
-  color: rgba(255,255,255,0.7);
-  font-size: 13px; cursor: pointer;
+  padding: 8px;
+  display: flex; align-items: center; gap: 8px;
+  color: white;
+  font-size: 16px; line-height: normal;
+  cursor: pointer;
+  border-radius: 8px;
   transition: background 0.15s, color 0.15s;
   user-select: none;
 }
-.nav-top:hover { background: rgba(255,255,255,0.07); color: white; }
-.nav-top .ico { width: 22px; height: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; opacity: 0.8; overflow: hidden; }
-.nav-top .ico svg { width: 16px; height: 16px; flex-shrink: 0; }
-.nav-top .ico img { width: auto; display: block; flex-shrink: 0; }
-.nav-top .ico img { height: 20px; width: auto; }
+.nav-top:hover { background: rgba(157, 170, 194, 0.6); color: var(--indigo-400); }
+.nav-top.active { background: var(--indigo-200); color: var(--indigo-400); }
+.nav-top .ico { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.nav-top .ico svg,
+.nav-top .ico img { width: 16px; height: 16px; flex-shrink: 0; display: block; }
+.nav-top:hover .ico img,
+.nav-top.active .ico img { filter: brightness(0); }
 .nav-top .arr { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
 .nav-top.open .arr { transform: rotate(180deg); }
 
 .nav-sub {
   overflow: hidden;
   max-height: 0;
+  padding-left: 32px;
   transition: max-height 0.25s ease;
 }
 .nav-sub.open { max-height: 500px; }
 
 .nav-item {
-  padding: 9px 14px 9px 48px;
-  color: rgba(255,255,255,0.75);
-  font-size: 14px; cursor: pointer;
+  padding: 8px;
+  color: white;
+  font-size: 16px; line-height: normal;
+  cursor: pointer;
+  border-radius: 8px;
   transition: background 0.15s, color 0.15s;
   user-select: none;
   display: flex; align-items: center; gap: 8px;
-  line-height: 1.3;
 }
-.nav-item:hover { background: rgba(255,255,255,0.07); color: white; }
-.nav-item.active { color: white; font-weight: 600; background: rgba(255,255,255,0.12); }
+.nav-item:hover { background: rgba(157, 170, 194, 0.6); color: var(--indigo-400); }
+.nav-item.active { background: var(--indigo-200); color: var(--indigo-400); }
 .nav-item .arr { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
 .nav-item.open .arr { transform: rotate(180deg); }
 
 .nav-deep {
   overflow: hidden;
   max-height: 0;
+  padding-left: 16px;
   transition: max-height 0.25s ease;
 }
 .nav-deep.open { max-height: 300px; }
 
 .nav-deep-item {
-  padding: 8px 14px 8px 62px;
-  color: rgba(255,255,255,0.65);
-  font-size: 14px; cursor: pointer;
+  padding: 8px;
+  color: white;
+  font-size: 14px; line-height: normal;
+  cursor: pointer;
+  border-radius: 8px;
   transition: background 0.15s, color 0.15s;
-  user-select: none; line-height: 1.3;
+  user-select: none;
+  display: flex; align-items: center; gap: 8px;
 }
-.nav-deep-item:hover { background: rgba(255,255,255,0.07); color: white; }
-.nav-deep-item.active { color: white; font-weight: 600; background: rgba(255,255,255,0.1); }
+.nav-deep-item:hover { background: rgba(157, 170, 194, 0.6); color: var(--indigo-400); }
+.nav-deep-item.active { background: var(--indigo-200); color: var(--indigo-400); }
 
 /* =============================================
    MAIN
@@ -565,31 +576,39 @@ nav { flex: 1; padding: 8px 0 20px; }
 .window-sub-label {
   padding-left: 44px !important;
   font-size: 13px; font-weight: 500;
-  color: var(--grey-700); width: 200px;
+  color: var(--grey-700);
 }
+/* Grade badge — Figma Button/tag "Various grade" variant */
 .grade-badge {
-  display: inline-flex; align-items: center;
-  padding: 2px 7px; border-radius: 10px;
-  background: var(--blue-100); color: var(--blue-500);
-  font-size: 11px; font-weight: 600; margin-left: 6px;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 20px;
+  background: var(--indigo-100); color: var(--indigo-400);
+  font-size: 12px; font-weight: 400; line-height: 16px;
+  margin-left: 6px;
 }
 
-/* Skill pill */
+/* Skill pill — spec: Item/table/data cell-level (34×160, 8px radius, no horizontal padding) */
 .pill {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 6px 10px; border-radius: 8px;
-  font-size: 13px; min-width: 130px; text-align: center;
+  height: 34px; min-width: 160px; padding: 0 4px;
+  border-radius: 8px;
+  font-size: 14px; color: var(--grey-600); text-align: center;
   white-space: nowrap;
+  cursor: pointer;
+  transition: filter 0.15s, box-shadow 0.15s;
 }
-.pill-na     { background: var(--grey-200); color: var(--grey-600); }
-.pill-age2   { background: var(--pink-100); color: var(--grey-600); }
-.pill-age3   { background: var(--purple-100); color: var(--grey-600); }
-.pill-age4   { background: var(--blue-100); color: var(--grey-600); }
-.pill-kinder { background: var(--teal-100); color: var(--grey-600); }
-.pill.hi.pill-age2   { background: var(--pink-500); color: white; font-weight: 600; }
-.pill.hi.pill-age3   { background: var(--purple-500); color: white; font-weight: 600; }
-.pill.hi.pill-age4   { background: var(--blue-500); color: white; font-weight: 600; }
-.pill.hi.pill-kinder { background: var(--teal-400); color: white; font-weight: 600; }
+.pill:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(10,42,102,0.15); }
+.pill-na     { background: var(--grey-200); }
+.pill-age2   { background: var(--pink-100); }
+.pill-age3   { background: var(--purple-100); }
+.pill-age4   { background: var(--blue-100); }
+.pill-kinder { background: var(--teal-100); }
+/* Highlighted state: darker fill, still grey-600 text (per Figma), 16px semibold */
+.pill.hi { font-size: 16px; font-weight: 600; }
+.pill.hi.pill-age2   { background: var(--pink-500); }
+.pill.hi.pill-age3   { background: var(--purple-500); }
+.pill.hi.pill-age4   { background: var(--blue-500); }
+.pill.hi.pill-kinder { background: var(--teal-400); }
 
 /* Sub-rows */
 .sub-row td { background: var(--grey-100); height: 62px; }
@@ -772,13 +791,33 @@ nav { flex: 1; padding: 8px 0 20px; }
 }
 .tbl-students tbody tr:last-child td { border-bottom: none; }
 .tbl-students tbody tr:hover td { background: var(--grey-100); }
+/* Status badges — mapped to Figma Button/tag variants (Message, Reminder, Mastered, Warning) */
 .status-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 20px;
+  font-size: 12px; font-weight: 400; line-height: 16px;
+  color: var(--grey-600);
+  border: 1px solid transparent;
+  box-sizing: border-box;
 }
-.status-not-started { background: var(--grey-200); color: var(--grey-600); }
-.status-in-progress { background: var(--yellow-100); color: #7a5200; }
-.status-completed   { background: #e8f4d6; color: #2d5a00; }
+.status-not-started {
+  background: rgba(203, 203, 205, 0.6); border-color: var(--grey-300); color: var(--grey-500);
+}
+.status-in-progress {
+  background: rgba(244, 191, 81, 0.6); border-color: var(--yellow);
+}
+.status-completed   {
+  background: var(--green);
+}
+.status-need-support {
+  background: rgba(241, 103, 86, 0.6); border-color: var(--red);
+}
+.status-progressing {
+  background: rgba(244, 191, 81, 0.6); border-color: var(--yellow);
+}
+.status-on-track    {
+  background: var(--green);
+}
 .status-dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot-not-started { background: var(--grey-400); }
 .dot-in-progress { background: var(--yellow); }
@@ -802,37 +841,58 @@ nav { flex: 1; padding: 8px 0 20px; }
 /* =============================================
    SHOW AVERAGE BAR
    ============================================= */
-.avg-cell { padding: 8px 20px 8px 12px; vertical-align: middle; }
+.avg-cell { padding: 0 6px; vertical-align: middle; }
 
-.avg-bar-wrap { position: relative; }
+/* Show Average — bar sits on a grid of 5 faint placeholder pills (one per column) */
+.avg-bar-wrap { position: relative; height: 34px; }
 
-.avg-bar-track {
-  position: relative; height: 22px;
-  background: var(--purple-100);
-  border-radius: 11px;
-  overflow: visible;
+/* Placeholder pills — one tinted shape per column, shown behind the colored bar */
+.avg-placeholders {
+  position: absolute; inset: 0;
+  display: flex; gap: 12px;
+  z-index: 0;
 }
+.avg-pl-pill { flex: 1; height: 34px; border-radius: 8px; }
+.avg-pl-pill.pl-na     { background: var(--grey-200); }
+.avg-pl-pill.pl-age2   { background: var(--pink-100); }
+.avg-pl-pill.pl-age3   { background: var(--purple-100); }
+.avg-pl-pill.pl-age4   { background: var(--blue-100); }
+.avg-pl-pill.pl-kinder { background: var(--teal-100); }
+
 .avg-bar-fill {
-  height: 100%; background: var(--purple-400);
-  border-radius: 11px 0 0 11px;
-  transition: width 0.4s ease;
+  position: absolute; top: 0; left: 0;
+  height: 34px;
+  border-radius: 8px 0 0 8px;
+  transition: width 0.4s ease, background 0.2s ease;
+  background: var(--purple-400);
+  z-index: 1;
 }
-.avg-bar-circle {
-  position: absolute; top: 50%;
-  transform: translate(-50%, -50%);
-  width: 34px; height: 34px;
-  background: white;
-  border: 2.5px solid var(--purple-500);
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700; color: var(--purple-500);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+.avg-bar-fill.avg-age2   { background: var(--pink-400); }
+.avg-bar-fill.avg-age3   { background: var(--purple-400); }
+.avg-bar-fill.avg-age4   { background: var(--blue-400); }
+.avg-bar-fill.avg-kinder { background: var(--teal-400); }
+
+.avg-bar-tag {
+  position: absolute; top: 0;
+  transform: translateX(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 34px; padding: 0 10px; min-width: 44px;
+  border-radius: 20px; border: 3px solid var(--purple-200);
+  background: var(--purple-400);
+  font-size: 12px; color: var(--grey-600); line-height: 16px;
+  white-space: nowrap;
+  box-sizing: border-box;
   z-index: 2;
 }
+.avg-bar-tag.avg-age2   { background: var(--pink-400);   border-color: var(--pink-200); }
+.avg-bar-tag.avg-age3   { background: var(--purple-400); border-color: var(--purple-200); }
+.avg-bar-tag.avg-age4   { background: var(--blue-400);   border-color: var(--blue-200); }
+.avg-bar-tag.avg-kinder { background: var(--teal-400);   border-color: var(--teal-200); }
+
 .avg-bar-label {
-  font-size: 11px; color: var(--grey-400);
-  text-align: center; margin-top: 6px;
-  position: absolute; transform: translateX(-50%);
+  position: absolute; top: 38px;
+  transform: translateX(-50%);
+  font-size: 12px; line-height: 16px; color: var(--grey-500);
   white-space: nowrap;
 }
 
@@ -870,15 +930,6 @@ nav { flex: 1; padding: 8px 0 20px; }
 }
 .window-banner .banner-close:hover { opacity: 1; }
 
-/* =============================================
-   PILL HOVER (underlined number = clickable)
-   ============================================= */
-.pill .pill-num {
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  cursor: pointer;
-}
-.pill:hover .pill-num { text-decoration-style: solid; }
 
 /* =============================================
    REPORT DETAILS POPUP
@@ -892,42 +943,65 @@ nav { flex: 1; padding: 8px 0 20px; }
 
 .report-detail-popup {
   background: white; border-radius: var(--radius-m);
-  width: 720px; max-width: 95vw; max-height: 85vh;
+  width: 960px; max-width: calc(100vw - 80px); max-height: 85vh;
   overflow: hidden; display: flex; flex-direction: column;
   box-shadow: var(--shadow-1);
 }
 .popup-hdr {
-  padding: 20px 24px 12px;
+  position: relative;
+  padding: 20px 24px 16px;
   border-bottom: 1px solid var(--grey-200);
 }
 .popup-hdr h2 {
   font-family: 'Fredoka', sans-serif;
-  font-size: 18px; font-weight: 600; color: var(--grey-600);
+  font-size: var(--font-xl); font-weight: 600; color: var(--grey-600);
+  text-align: center;
+  line-height: var(--lh-loose);
   margin-bottom: 4px;
 }
-.popup-hdr p { font-size: 13px; color: var(--grey-500); }
+.popup-hdr p {
+  font-size: var(--font-md); font-weight: 600; color: var(--grey-500);
+  line-height: var(--lh-loose);
+}
+/* Close X button (top-left) */
+.popup-close {
+  position: absolute; top: 16px; left: 16px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--grey-300); border-radius: 50%;
+  background: white; color: var(--grey-600);
+  cursor: pointer; padding: 0;
+  font-size: 14px; line-height: 1;
+  transition: background 0.15s;
+}
+.popup-close:hover { background: var(--grey-100); }
 
 .popup-tbl-wrap { flex: 1; overflow-y: auto; }
 .popup-tbl {
-  width: 100%; border-collapse: collapse; font-size: 13px;
+  width: 100%; border-collapse: collapse; font-size: 14px;
 }
 .popup-tbl th {
-  font-size: 11px; font-weight: 600; color: var(--grey-500);
-  text-transform: uppercase; letter-spacing: 0.3px;
-  padding: 10px 16px; text-align: left;
+  font-size: 14px; font-weight: 400; color: var(--grey-600);
+  padding: 12px 16px; text-align: left;
+  background: var(--grey-100);
   border-bottom: 1px solid var(--grey-200);
-  position: sticky; top: 0; background: white; z-index: 1;
+  position: sticky; top: 0; z-index: 1;
 }
 .popup-tbl td {
-  padding: 10px 16px; border-bottom: 1px solid var(--grey-200);
+  padding: 12px 16px; border-bottom: 1px solid var(--grey-200);
   color: var(--grey-600);
 }
 .popup-tbl tbody tr:last-child td { border-bottom: none; }
 .popup-tbl tbody tr:hover td { background: var(--grey-100); }
 
-.learning-level-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 9px; border-radius: 20px; font-size: 12px; font-weight: 500;
+/* Learning Level cell — colored dot + plain text (per Figma data snapshot popup) */
+.learning-level-cell {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; color: var(--grey-600);
+}
+.level-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .popup-footer {

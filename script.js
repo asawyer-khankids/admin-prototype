@@ -10,7 +10,7 @@ const DOMAINS = ['Overview', 'Math', 'Literacy', 'Language', 'Executive Function
 // Student Levels: [notAssessed, age2, age3, age4, kinder]  (% of TOTAL)
 const SL = {
   domain: {
-    'Overview':           [20, 20, 20, 20, 20],
+    'Overview':           [20, 40, 20, 15,  5],
     'Math':               [20, 20, 40, 10, 10],
     'Literacy':           [10, 50, 20, 15,  5],
     'Language':           [30, 35, 20, 15,  0],
@@ -28,11 +28,11 @@ const SL = {
   standard: {
     // Math
     'Count 1 by 1':        [15, 25, 38, 15,  7],
-    'More or Less':         [20, 30, 35, 10,  5],
+    'More or Less':         [15, 22, 40, 18,  5],
     'Numerals':             [18, 22, 42, 12,  6],
     'Add':                  [25, 20, 38, 12,  5],
     'Subtract':             [28, 18, 35, 14,  5],
-    'Patterns':             [22, 24, 40, 10,  4],
+    'Patterns':             [18, 22, 40, 15,  5],
     // Literacy
     'Phonological Awareness':   [12, 45, 25, 12,  6],
     'Letter Recognition':        [8, 38, 30, 16,  8],
@@ -309,19 +309,30 @@ function calcAverage(vals) {
   return (2*a2 + 3*a3 + 4*a4 + 5*kg) / total;
 }
 
-// Render the continuous average bar (spans all 5 data columns via colspan)
+// Render the continuous average bar (spans all 5 data columns via colspan).
+// Bar + pill tag color = the modal skill band for this row, so it matches the
+// highlighted pill shown when Show Average is off (same data, same color).
 function makeAvgBar(vals) {
   const avg = calcAverage(vals);
   if (avg === null) return '<td colspan="5" class="avg-cell"><em style="color:var(--grey-400);font-size:12px;">Not enough data</em></td>';
-  const pctPos = ((avg - 2) / 3) * 100; // scale 2–5 → 0–100%
+  // 5 equal columns (NA, Age 2, Age 3, Age 4, Kinder) at 20% each.
+  // Each value unit spans one column: avg=2 → start of Age 2 (20%), avg=3 → start of Age 3 (40%),
+  // avg=5 → start of Kinder (80%). So avg=2.5 sits halfway through Age 2.
+  const pctPos = (avg - 1) * 20;
   const display = avg.toFixed(1);
+  const band = PILL_TYPES[hiIdx(vals)]; // 'age2' | 'age3' | 'age4' | 'kinder'
   return `
     <td colspan="5" class="avg-cell">
       <div class="avg-bar-wrap">
-        <div class="avg-bar-track">
-          <div class="avg-bar-fill" style="width:${pctPos}%"></div>
-          <div class="avg-bar-circle" style="left:${pctPos}%">${display}</div>
+        <div class="avg-placeholders">
+          <div class="avg-pl-pill pl-na"></div>
+          <div class="avg-pl-pill pl-age2"></div>
+          <div class="avg-pl-pill pl-age3"></div>
+          <div class="avg-pl-pill pl-age4"></div>
+          <div class="avg-pl-pill pl-kinder"></div>
         </div>
+        <div class="avg-bar-fill avg-${band}" style="width:${pctPos}%"></div>
+        <div class="avg-bar-tag avg-${band}" style="left:${pctPos}%">${display}</div>
         <div class="avg-bar-label" style="left:${pctPos}%">Average</div>
       </div>
     </td>`;
@@ -331,11 +342,8 @@ function makePill(val, idx, hi, colLabel) {
   const t = PILL_TYPES[idx];
   const hiClass = hi ? ' hi' : '';
   const label = colLabel || COL_LABELS[idx];
-  // Numbers are clickable to open the detail popup (only for skill columns, not Not Assessed)
-  const inner = idx > 0
-    ? `<span class="pill-num" data-action="openPopup" data-col="${esc(label)}" data-val="${val}">${pillLabel(val)}</span>`
-    : pillLabel(val);
-  return `<span class="pill pill-${t}${hiClass}">${inner}</span>`;
+  // Every pill (including Not Assessed) is clickable; opens the detail popup for that column.
+  return `<span class="pill pill-${t}${hiClass}" data-action="openPopup" data-col="${esc(label)}" data-val="${val}">${pillLabel(val)}</span>`;
 }
 
 function makeBar(segs) {
@@ -512,9 +520,6 @@ function slDataCells(vals) {
 }
 
 function slTheadCells() {
-  if (state.sl.showAvg) {
-    return `<th class="col-na" colspan="5" style="text-align:left;color:var(--grey-500);">Average Level</th>`;
-  }
   return `
     <th class="col-na">Not Assessed</th>
     <th class="col-age2">Age 2 Skills</th>
@@ -551,15 +556,8 @@ function renderSL_L0() {
     colHeader = 'Standard';
     rows = standards.map(std => {
       const vals = SL.standard[std] || [20, 20, 20, 20, 20];
-      const isExpanded = state.sl.expandedRows.has(std);
-      let subRows = '';
-      if (isExpanded && isAllWindows) {
-        subRows = `<tr class="sub-row show">
-          <td colspan="6" style="padding:0; height:auto;">
-            <table class="tbl-levels" style="width:100%"><tbody>${renderWindowSubRows('domain')}</tbody></table>
-          </td>
-        </tr>`;
-      }
+      const isExpanded = isAllWindows && state.sl.expandedRows.has(std);
+      const subRowsHtml = isExpanded ? renderWindowSubRows('domain') : '';
       return `<tr>
         <td>
           <div class="dom-cell">
@@ -568,34 +566,24 @@ function renderSL_L0() {
           </div>
         </td>
         ${slDataCells(vals)}
-      </tr>${subRows}`;
+      </tr>${subRowsHtml}`;
     }).join('');
   } else {
-    // Overview mode: show all domains
+    // Overview mode: show all domains. Rows are only expandable when "All assessment windows" is selected.
     colHeader = 'Domain';
     rows = DOMAINS.map(domain => {
       const vals = SL.domain[domain];
-      const isExpanded = state.sl.expandedRows.has(domain);
-      let subRows = '';
-      if (isExpanded) {
-        const inner = isAllWindows
-          ? renderWindowSubRows('domain')
-          : renderSubRows(domain);
-        subRows = `<tr class="sub-row show" data-sub="${esc(domain)}">
-          <td colspan="6" style="padding:0; height:auto;">
-            <table class="tbl-levels" style="width:100%"><tbody>${inner}</tbody></table>
-          </td>
-        </tr>`;
-      }
+      const isExpanded = isAllWindows && state.sl.expandedRows.has(domain);
+      const subRowsHtml = isExpanded ? renderWindowSubRows('domain') : '';
       return `<tr data-domain="${esc(domain)}">
         <td>
           <div class="dom-cell">
-            <button class="expand-chevron${isExpanded ? ' open' : ''}" data-action="sl-toggle-expand:${esc(domain)}" title="Expand">&#8964;</button>
+            ${isAllWindows ? `<button class="expand-chevron${isExpanded ? ' open' : ''}" data-action="sl-toggle-expand:${esc(domain)}" title="Expand">&#8964;</button>` : ''}
             <span class="dom-link" data-action="sl-drill-domain:${esc(domain)}">${esc(domain)}</span>
           </div>
         </td>
         ${slDataCells(vals)}
-      </tr>${subRows}`;
+      </tr>${subRowsHtml}`;
     }).join('');
   }
 
@@ -659,12 +647,7 @@ function renderSL_L1(path) {
     </tr>`;
 
     if (!isExpanded) return [mainRow];
-    const subRow = `<tr class="sub-row show">
-      <td colspan="6" style="padding:0; height:auto;">
-        <table class="tbl-levels" style="width:100%"><tbody>${renderWindowSubRows('schools')}</tbody></table>
-      </td>
-    </tr>`;
-    return [mainRow, subRow];
+    return [mainRow, renderWindowSubRows('schools')];
   }).join('');
 
   return `
@@ -711,12 +694,7 @@ function renderSL_L2(path) {
     </tr>`;
 
     if (!isExpanded) return [mainRow];
-    const subRow = `<tr class="sub-row show">
-      <td colspan="6" style="padding:0; height:auto;">
-        <table class="tbl-levels" style="width:100%"><tbody>${renderWindowSubRows('classes')}</tbody></table>
-      </td>
-    </tr>`;
-    return [mainRow, subRow];
+    return [mainRow, renderWindowSubRows('classes')];
   }).join('');
 
   return `
@@ -1136,14 +1114,14 @@ function renderSP_L3(path) {
     const p = s.placement;
     const label = PLACEMENT_MAP[p].label;
     const dotColor = DOT_COLORS[p];
-    const badgeStyle = p === 'need-support' ? 'background:#fde8e5;color:#8a1e10;'
-                     : p === 'progressing'  ? 'background:#fff3d6;color:#7a5200;'
-                     : p === 'on-track'     ? 'background:#e8f4d6;color:#2d5a00;'
-                     :                        'background:var(--grey-200);color:var(--grey-600);';
+    const badgeCls = p === 'need-support' ? 'status-need-support'
+                   : p === 'progressing'  ? 'status-progressing'
+                   : p === 'on-track'     ? 'status-on-track'
+                   :                        'status-not-started';
     return `<tr>
       <td>${makeAvatar(s.name)} &nbsp; ${esc(s.name)}</td>
       <td>
-        <span class="status-badge" style="${badgeStyle}">
+        <span class="status-badge ${badgeCls}">
           <span class="status-dot" style="background:${dotColor}"></span>
           ${label}
         </span>
@@ -1263,7 +1241,6 @@ function render() {
     ${state.generated ? `<div class="report-block">${renderReportContent()}</div>` : ''}`;
 
   updateSidebar();
-  wireEvents();
 }
 
 /* ============================================================
@@ -1564,6 +1541,17 @@ function openDetailPopup(colLabel, val) {
   const rows = POPUP_STUDENTS.filter(s => s.levelLabel === colLabel || true).slice(0, 10);
 
   const tbody = document.getElementById('popupTbody');
+  // Readiness compares Learning Level vs Enrolled Grade on a 2–5 scale
+  // (Pre-K 2 = 2, Pre-K 3 = 3, Pre-K 4 = 4, Kinder = 5; Age N Skills follows the same).
+  const GRADE_RANK = { 'Pre-K 2': 2, 'Pre-K 3': 3, 'Pre-K 4': 4, 'Kinder': 5 };
+  const LEVEL_RANK = { age2: 2, age3: 3, age4: 4, kinder: 5 };
+  const readiness = s => {
+    const g = GRADE_RANK[s.grade], l = LEVEL_RANK[s.level];
+    if (g == null || l == null) return '';
+    if (l > g) return 'Above Level';
+    if (l < g) return 'Below Level';
+    return 'On Level';
+  };
   tbody.innerHTML = rows.map(s => `
     <tr>
       <td>River Valley SD</td>
@@ -1573,10 +1561,12 @@ function openDetailPopup(colLabel, val) {
       <td>${esc(s.grade)}</td>
       <td>${esc(s.domain)}</td>
       <td>
-        <span class="learning-level-badge" style="background:${LEVEL_COLORS[s.level]};color:${LEVEL_TEXT[s.level]}">
+        <span class="learning-level-cell">
+          <span class="level-dot" style="background:${LEVEL_COLORS[s.level]}"></span>
           ${esc(s.levelLabel)}
         </span>
       </td>
+      <td>${readiness(s)}</td>
     </tr>`).join('');
 
   overlay.classList.add('open');
@@ -1701,15 +1691,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('districtDropdown').classList.remove('open');
   });
 
-  // Detail popup close handlers
-  document.getElementById('popupCancel').addEventListener('click', () => {
-    document.getElementById('detailPopup').classList.remove('open');
-  });
+  // Detail popup close handlers (X button, Cancel button, click-outside)
+  const closePopup = () => document.getElementById('detailPopup').classList.remove('open');
+  document.getElementById('popupClose').addEventListener('click', closePopup);
+  document.getElementById('popupCancel').addEventListener('click', closePopup);
   document.getElementById('detailPopup').addEventListener('click', e => {
-    if (e.target === document.getElementById('detailPopup')) {
-      document.getElementById('detailPopup').classList.remove('open');
-    }
+    if (e.target === document.getElementById('detailPopup')) closePopup();
   });
 
+  // Wire delegated listeners on #mainContent ONCE (they survive re-renders since
+  // render() only replaces innerHTML, not the #mainContent element itself).
+  wireEvents();
   render();
 });
