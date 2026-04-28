@@ -467,7 +467,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
   background: white; border: 1px solid var(--grey-200);
   border-radius: var(--radius);
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  /* `clip` keeps the rounded-corner clipping but, unlike `hidden`, does NOT
+     establish a scroll container. Sticky thead/pinned rows can therefore stick
+     relative to the page viewport instead of being trapped inside this block. */
+  overflow: clip;
 }
 
 /* Breadcrumbs */
@@ -543,6 +546,9 @@ nav { flex: 1; padding: 8px 8px 20px; }
   border-bottom: 1px solid var(--grey-200);
   white-space: nowrap;
   box-sizing: border-box;
+  /* Keep column headers visible as the user scrolls long lists. */
+  position: sticky; top: 0; z-index: 4;
+  background: white;
 }
 .tbl-levels th:first-child {
   text-align: left;
@@ -570,7 +576,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .tbl-levels td:not(:first-child) { text-align: center; }
 .tbl-levels tbody tr:last-child td { border-bottom: none; }
 .tbl-levels tbody tr:hover:not(.sub-row):not(.pinned) td { background: var(--grey-100); }
-.tbl-levels tr.pinned td { background: var(--indigo-100); }
+/* Pinned rows (District at L1, "{school} total" at L2, "{class}" at L3) stay
+   stuck to the top under the column headers as users scroll the list. */
+.tbl-levels tr.pinned td {
+  background: var(--indigo-100);
+  position: sticky; top: 36px; z-index: 3;
+}
 
 /* Domain cell */
 .dom-cell {
@@ -590,8 +601,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .dom-link:hover { color: var(--indigo-400); }
 .star-badge { color: var(--indigo-300); margin-left: 6px; font-size: 13px; }
 
-/* Window sub-rows (All assessment windows mode) */
-.window-sub-row td { background: var(--grey-50, #fafafa); }
+/* Window sub-rows (All assessment windows mode) — distinctly darker than data
+   rows so the expanded fall/spring rows clearly read as nested under their
+   parent. */
+.window-sub-row td { background: #d8dde8; }
 .window-sub-label {
   padding-left: 44px !important;
   font-size: 13px; font-weight: 500;
@@ -650,6 +663,14 @@ nav { flex: 1; padding: 8px 8px 20px; }
    STACKED BAR TABLE (Completion / Placement)
    ============================================= */
 .tbl-bars { width: 100%; border-collapse: collapse; }
+.tbl-bars th {
+  font-size: 12px; font-weight: 600;
+  padding: 10px 20px; text-align: left;
+  color: var(--grey-500);
+  border-bottom: 1px solid var(--grey-200);
+  background: white;
+  position: sticky; top: 0; z-index: 4;
+}
 .tbl-bars td {
   padding: 0 20px; height: 78px;
   vertical-align: middle;
@@ -658,7 +679,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .tbl-bars td:first-child { width: 200px; }
 .tbl-bars tbody tr:last-child td { border-bottom: none; }
 .tbl-bars tbody tr:hover td { background: var(--grey-100); }
-.tbl-bars tr.pinned td { background: var(--indigo-100); }
+.tbl-bars tr.pinned td {
+  background: var(--indigo-100);
+  position: sticky; top: 36px; z-index: 3;
+}
 
 .bar-label {
   font-size: 14px; font-weight: 500;
@@ -1065,7 +1089,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
 /* =============================================
    TABLE SCROLL WRAPPER
    ============================================= */
-.tbl-wrap { overflow-x: auto; }
+/* Don't introduce any overflow on this wrapper — sticky thead + pinned rows
+   need the page (not this wrapper) to be the scroll context. Setting
+   overflow-x:auto would force overflow-y:auto per spec, trapping sticky inside
+   a non-scrolling container. The tables use table-layout:fixed + width:100%,
+   so horizontal overflow isn't a concern at typical widths. */
+.tbl-wrap { overflow: visible; }
 
 /* =============================================
    SHOW AVERAGE BAR
@@ -1075,10 +1104,13 @@ nav { flex: 1; padding: 8px 8px 20px; }
 /* Show Average — bar sits on a grid of 5 faint placeholder pills (one per column) */
 .avg-bar-wrap { position: relative; height: 34px; }
 
-/* Placeholder pills — one tinted shape per column, shown behind the colored bar */
+/* Placeholder pills — one tinted shape per column, shown behind the colored bar.
+   No gap between pills so each pill spans exactly 20% of the bar width. This
+   keeps the visual column boundaries aligned with the score-to-position math
+   in makeAvgBar() (each integer score = column-boundary multiple of 20%). */
 .avg-placeholders {
   position: absolute; inset: 0;
-  display: flex; gap: 12px;
+  display: flex; gap: 0;
   z-index: 0;
 }
 .avg-pl-pill { flex: 1; height: 34px; border-radius: 8px; }
@@ -1167,6 +1199,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
   display: none; position: fixed; inset: 0;
   background: rgba(10,42,102,0.3);
   z-index: 250; align-items: center; justify-content: center;
+  /* Dim covers the whole viewport, but the popup itself is offset by the
+     sidebar width so it centers within the main content area rather than
+     butting up against the nav. Extra right padding keeps the popup from
+     sitting flush against the viewport edge. */
+  padding: 24px 56px 24px calc(var(--sidebar-w) + 24px);
+  overflow-y: auto;
 }
 .popup-overlay.open { display: flex; }
 
@@ -1223,8 +1261,9 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .popup-tbl tbody tr:last-child td { border-bottom: none; }
 .popup-tbl tbody tr:hover td { background: var(--grey-100); }
 
-/* Learning Level cell — colored dot + plain text (per Figma data snapshot popup) */
-.learning-level-cell {
+/* Learning Level + Readiness cells — colored dot + plain text */
+.learning-level-cell,
+.readiness-cell {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 14px; color: var(--grey-600);
 }
