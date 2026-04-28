@@ -812,9 +812,12 @@ function makePill(val, total, idx, hi, colLabel, baseCtx) {
 
 function makeBar(segs) {
   // segs: [{cls, flex, label}]
+  // Every visible segment shows its percentage label, even small ones — narrow
+  // segments rely on the .seg flex:0 0 auto + min-width treatment in CSS so the
+  // label stays readable instead of being clipped to nothing.
   return '<div class="stacked-bar">' +
     segs.filter(s => s.flex > 0).map(s =>
-      `<div class="seg ${s.cls}" style="flex:${s.flex}">${s.flex >= 10 ? s.label : ''}</div>`
+      `<div class="seg ${s.cls}" style="flex:${s.flex}" title="${esc(s.label)}">${s.label}</div>`
     ).join('') + '</div>';
 }
 
@@ -915,6 +918,7 @@ function renderFilterCard() {
     { value: 'spec',   label: 'they’ve met the domain completion requirement' },
     { value: 'soft50', label: 'they’ve met half the domain completion requirement' },
     { value: 'loose',  label: 'they pass any one assessment' },
+    { value: 'demo',   label: 'demo' },
   ];
   const slGateOpts = [
     { value: 'min1', label: 'they’ve passed any assessment' },
@@ -1466,26 +1470,31 @@ function renderSL_L3(path) {
       classScoreRank: csRank, buckets,
     }];
   } else {
-    const scales = SCALE_DISPLAY[drilledDomain] || [];
-    rowsData = scales.map(std => {
-      const supported = supportedRanksForCode(drilledDomain, std.code);
-      const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
-      const ranks = [];
-      for (const ui of eligibleStudents) {
-        const rank = studentRankForCode(ui, std.code);
-        const stu = CD.studentByIdx[ui];
-        if (rank === 0) buckets.notAttempted.push(stu.name);
-        else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
-        if (rank > 0) ranks.push(rank);
-      }
-      ranks.sort((a, b) => a - b);
-      const csRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
-      return { code: std.code, name: std.name, supported, classScoreRank: csRank, buckets };
-    });
+    // Drilled into a specific domain (Math / Literacy / Language / Executive
+    // Function): show a single row for that domain's aggregate score (median
+    // across the domain's scales per student). The per-standard breakdown is
+    // available by drilling into a specific standard from L0.
+    const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
+    const ranks = [];
+    for (const ui of eligibleStudents) {
+      const rank = studentLevelForDomain(ui, drilledDomain, winIdx);
+      const stu = CD.studentByIdx[ui];
+      if (rank === 0) buckets.notAttempted.push(stu.name);
+      else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+      if (rank > 0) ranks.push(rank);
+    }
+    ranks.sort((a, b) => a - b);
+    const csRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
+    rowsData = [{
+      code: drilledDomain, name: drilledDomain, supported: new Set([1, 2, 3, 4]),
+      classScoreRank: csRank, buckets,
+    }];
   }
 
-  // Header (5 cols: Standard | Age 2 | Age 3 | Age 4 | Kindergarten)
-  const headerLabel = drilledDomain === 'Overview' ? 'Domain' : 'Standard';
+  // Header (5 cols: Standard|Domain | Age 2 | Age 3 | Age 4 | Kindergarten).
+  // "Standard" only when the user explicitly drilled into a single standard;
+  // domain or Overview drills both show a single domain row.
+  const headerLabel = (drilledEntry && drilledEntry.isStandard) ? 'Standard' : 'Domain';
   const headerCols = LEVELS.map(lv => {
     return `<th>
       <div class="edu-col-header ${lv}">
@@ -1572,12 +1581,17 @@ function renderSL_L3(path) {
     </tr>${naBanner}`;
   }).join('');
 
-  // For the isStandard case (single scale fully expanded), render the Figma's
-  // class-math grid layout instead of the table-based fallback below.
-  if (drilledEntry && drilledEntry.isStandard && rowsData.length === 1) {
+  // L3 always renders as a single-row "edu-grid" matching the Figma class-math
+  // layout: Domain label | Not Yet Attempted | 4 age columns.
+  // - Standard drill: title = scale's domain, subtitle = scale name, skill bullets per column
+  // - Domain drill: title = domain name, no subtitle, no bullets
+  // - Overview drill: title = "Overview", no subtitle, no bullets
+  if (rowsData.length === 1) {
     const row = rowsData[0];
     const csLevel = RANK_TO_LEVEL[row.classScoreRank] || null;
-    const subtitle = row.name; // scale name as subtitle below the domain
+    const isStandard = drilledEntry && drilledEntry.isStandard;
+    const title = isStandard ? (drilledEntry.scaleDomain || drilledDomain) : row.name;
+    const subtitle = isStandard ? row.name : '';
     const studentCard = n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`;
     const levelCell = lv => {
       const supportedRank = { age2: 1, age3: 2, age4: 3, kinder: 4 }[lv];
@@ -1586,7 +1600,8 @@ function renderSL_L3(path) {
       if (!isSupported) {
         return `<div class="edu-g-cell level ${lv} na">N/A</div>`;
       }
-      const bullets = (SKILLS_BY_AGE[row.code] && SKILLS_BY_AGE[row.code][lv]) || [];
+      // Bullets are per-(scale code, age band). Only populated for standard drills.
+      const bullets = isStandard && SKILLS_BY_AGE[row.code] && SKILLS_BY_AGE[row.code][lv] || [];
       const bulletsHtml = bullets.length
         ? `<ul class="edu-g-bullets">${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`
         : '';
@@ -1603,7 +1618,7 @@ function renderSL_L3(path) {
       ${renderBreadcrumbs(path)}
       <div class="report-toolbar">
         <div class="toolbar-left"></div>
-        <div class="toolbar-center">${esc(getReportTitle())} <span class="info-icon">&#9432;</span></div>
+        <div class="toolbar-center">${esc(getReportTitle())}</div>
         <div class="toolbar-right"><button class="btn btn-ghost">&#11015; Download CSV</button></div>
       </div>
       <div class="edu-grid">
@@ -1615,8 +1630,8 @@ function renderSL_L3(path) {
         <div class="edu-g-h kinder">Kindergarten Skills</div>
 
         <div class="edu-g-cell domain-label">
-          <div class="title">${esc(drilledEntry.scaleDomain || drilledDomain)}</div>
-          <div class="subtitle">${esc(subtitle)}</div>
+          <div class="title">${esc(title)}</div>
+          ${subtitle ? `<div class="subtitle">${esc(subtitle)}</div>` : ''}
         </div>
         <div class="edu-g-cell not-attempted-col">
           <div class="edu-g-na-tag">Not Yet Attempted</div>
@@ -1658,24 +1673,26 @@ function acBar(vals) {
   const [ns, ip, cp] = vals;
   const total = ns + ip + cp;
   const pct = c => total > 0 ? Math.round((c / total) * 100) : 0;
+  // Use the rounded percent as both the flex weight and the visibility check
+  // so a segment that rounds to 0% renders no colored bar at all.
   return makeBar([
-    { cls: 'seg-grey',   flex: ns, label: `${pct(ns)}%` },
-    { cls: 'seg-yellow', flex: ip, label: `${pct(ip)}%` },
-    { cls: 'seg-green',  flex: cp, label: `${pct(cp)}%` },
+    { cls: 'seg-grey',   flex: pct(ns), label: `${pct(ns)}%` },
+    { cls: 'seg-yellow', flex: pct(ip), label: `${pct(ip)}%` },
+    { cls: 'seg-green',  flex: pct(cp), label: `${pct(cp)}%` },
   ]);
 }
 
 function renderACLegend() {
+  // Title is centered: legend items left, spacer, title, spacer, Download CSV right.
   return `
     <div class="legend-bar">
       <div class="leg-item"><div class="leg-dot" style="background:var(--grey-300)"></div> Not started</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--yellow)"></div> In progress</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--green)"></div> Completed <span class="info-icon" title="Students who met the domain completion requirement">&#9432;</span></div>
       <div class="spacer"></div>
-      <div style="font-family:'Fredoka',sans-serif;font-size:18px;font-weight:600;color:var(--grey-600);">
-        Fall Assessment Completion <span class="info-icon">&#9432;</span>
-      </div>
-      <button class="btn btn-ghost" style="margin-left:16px;">&#11015; Download CSV</button>
+      <div class="legend-title">Fall Assessment Completion</div>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost">&#11015; Download CSV</button>
     </div>`;
 }
 
@@ -1869,15 +1886,17 @@ function spBar(vals) {
   const [na, ns, pr, ot] = vals;
   const total = na + ns + pr + ot;
   const pct = c => total > 0 ? Math.round((c / total) * 100) : 0;
+  // Flex by rounded percent so segments that round to 0% don't render at all.
   return makeBar([
-    { cls: 'seg-grey',   flex: na, label: `${pct(na)}%` },
-    { cls: 'seg-red',    flex: ns, label: `${pct(ns)}%` },
-    { cls: 'seg-yellow', flex: pr, label: `${pct(pr)}%` },
-    { cls: 'seg-green',  flex: ot, label: `${pct(ot)}%` },
+    { cls: 'seg-grey',   flex: pct(na), label: `${pct(na)}%` },
+    { cls: 'seg-red',    flex: pct(ns), label: `${pct(ns)}%` },
+    { cls: 'seg-yellow', flex: pct(pr), label: `${pct(pr)}%` },
+    { cls: 'seg-green',  flex: pct(ot), label: `${pct(ot)}%` },
   ]);
 }
 
 function renderSPLegend() {
+  // Title is centered: legend items left, spacer, title, spacer, Download CSV right.
   return `
     <div class="legend-bar">
       <div class="leg-item"><div class="leg-dot" style="background:var(--grey-300)"></div> Not assessed</div>
@@ -1885,10 +1904,9 @@ function renderSPLegend() {
       <div class="leg-item"><div class="leg-dot" style="background:var(--yellow)"></div> Progressing</div>
       <div class="leg-item"><div class="leg-dot" style="background:var(--green)"></div> On track <span class="info-icon" title="Student placement tiers">&#9432;</span></div>
       <div class="spacer"></div>
-      <div style="font-family:'Fredoka',sans-serif;font-size:18px;font-weight:600;color:var(--grey-600);">
-        Fall Student Placement <span class="info-icon">&#9432;</span>
-      </div>
-      <button class="btn btn-ghost" style="margin-left:16px;">&#11015; Download CSV</button>
+      <div class="legend-title">Grade-Level Readiness</div>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost">&#11015; Download CSV</button>
     </div>`;
 }
 
@@ -2348,9 +2366,10 @@ function refreshSL() {
 }
 
 function render() {
-  // Swap the active dataset based on the slGate filter. 'demo' uses the
-  // synthetic dataset (loaded lazily); everything else uses real data.
-  const wantDemo = state.filters.slGate === 'demo';
+  // Swap the active dataset based on the slGate or completionMode filter.
+  // 'demo' on either dropdown uses the synthetic dataset (loaded lazily);
+  // everything else uses real data.
+  const wantDemo = state.filters.slGate === 'demo' || state.filters.completionMode === 'demo';
   if (wantDemo && !CD.demoLoaded) {
     // Kick off load and re-render once it lands. Render with real data for now
     // so the page isn't blank during the fetch.
