@@ -369,6 +369,18 @@ def main():
     for did in seen_districts:
         out_districts.append({"district_id": did, "name": districts.get(did, "")})
 
+    # For each leaf_path: derive the set of supported module ranks (1-4) from the
+    # modules observed in the items data. Used by the prototype to mark cells as
+    # N/A for scales that don't test a particular age band (e.g., MAT6a Add only
+    # tests 4YO + KG, so its 2YO and 3YO cells should show a dashed N/A indicator).
+    scale_supported_ranks: dict[str, set[int]] = defaultdict(set)
+    for (lp, mod), items_set in total_items.items():
+        if not items_set:
+            continue
+        rank = MODULE_RANK.get(mod, 0)
+        if rank > 0:
+            scale_supported_ranks[lp].add(rank)
+
     out_scales = []
     for lp in scale_keys:
         s = scales[lp]
@@ -379,6 +391,7 @@ def main():
                 "name": s["name"],
                 "domain": s["domain"],
                 "language": s["language"],
+                "modules": sorted(scale_supported_ranks.get(lp, set())),
             }
         )
 

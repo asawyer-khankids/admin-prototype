@@ -10,6 +10,49 @@
 const DOMAINS = ['Overview', 'Math', 'Literacy', 'Language', 'Executive Function'];
 const SKILL_DOMAINS = ['Math', 'Literacy', 'Language', 'Executive Function'];
 
+// Canonical scale display names + ordering, sourced from
+// "[SPEC] Assessment Reports for Educators.md" (Math Scales + Literacy Scales sections).
+// Math + Literacy follow the SPEC's visual table order (which is age-of-first-assessment,
+// not code-number order). Language + Executive Function aren't given an explicit order
+// in the SPEC, so they follow code order.
+const SCALE_DISPLAY = {
+  'Math': [
+    { code: 'MAT3',  name: 'Count 1-by-1' },
+    { code: 'MAT4',  name: 'More or Less' },
+    { code: 'MAT9',  name: 'Shapes' },
+    { code: 'MAT8',  name: 'Measurement' },
+    { code: 'MAT5',  name: 'Numerals' },
+    { code: 'MAT7',  name: 'Patterns' },
+    { code: 'MAT10', name: 'Positions' },
+    { code: 'MAT2',  name: 'Subitizing' },
+    { code: 'MAT6a', name: 'Addition' },
+    { code: 'MAT6b', name: 'Subtraction' },
+  ],
+  'Literacy': [
+    { code: 'LIT5',    name: 'Answering Questions' },
+    { code: 'LIT3a',   name: 'Letter Names' },
+    { code: 'LIT2',    name: 'Print Concepts' },
+    { code: 'LIT4',    name: 'Retelling Stories' },
+    { code: 'LIT1a',   name: 'Rhyming' },
+    { code: 'LIT1c',   name: 'Segmenting' },
+    { code: 'LIT1b',   name: 'Blending & Adding' },
+    { code: 'LIT3bi',  name: 'Consonant Sounds' },
+    { code: 'LIT3bii', name: 'Vowel Sounds' },
+    { code: 'LIT1d',   name: 'Decoding & Encoding' },
+  ],
+  'Language': [
+    { code: 'LAN6',  name: 'Vocabulary' },
+    { code: 'LAN7a', name: 'Word Categories' },
+    { code: 'LAN7b', name: 'Shared Characteristics' },
+  ],
+  'Executive Function': [
+    { code: 'ATL5a', name: 'Hearts and Stars' },
+    { code: 'ATL5b', name: 'Day and Night' },
+    { code: 'ATL8',  name: 'Reverse Order Sequence' },
+    { code: 'ATL9',  name: 'Dimensional Card Sort' },
+  ],
+};
+
 // CD = Computed Data, populated by loadComputed() at startup.
 const CD = {
   raw: null,                // full computed.json contents
@@ -84,6 +127,41 @@ function aggregateLevels(userIndices, scaleSel, windowName, languageFilter, grad
       level = ranks[Math.floor((ranks.length - 1) / 2)];
     }
     counts[level]++;
+  }
+  return counts;
+}
+
+// Aggregate per-scale-CODE levels: each student contributes their HIGHEST rank
+// across the given scaleIndices (typically the EN + SP versions of one scale code).
+// Per SPEC: "use the student's highest domain score for a given domain, regardless
+// of language" — applied at the scale level so the standards-mode view doesn't
+// split students who took the same scale in different languages.
+function aggregateLevelsMergedByCode(userIndices, scaleIndices, windowName, languageFilter, gradeFilter) {
+  const counts = [0, 0, 0, 0, 0];
+  if (!CD.ready || !scaleIndices || scaleIndices.size === 0) return counts;
+  const allWindows = !windowName || windowName === 'All assessment windows';
+  const winIdx = allWindows ? null : CD.windowIdx[windowName];
+  if (!allWindows && winIdx === undefined) return counts;
+  const langCode = languageFilter === 'English' ? 'EN'
+                 : languageFilter === 'Spanish' ? 'SP'
+                 : languageFilter || 'All';
+
+  for (const ui of userIndices) {
+    const stu = CD.studentByIdx[ui];
+    if (!stu) continue;
+    if (langCode !== 'All' && stu.language !== langCode) continue;
+    if (gradeFilter && gradeFilter !== 'All grades') {
+      const c = CD.classByGroup[stu.group_id];
+      if (!c || c.grade !== gradeFilter) continue;
+    }
+    let maxRank = 0;
+    for (const lvl of (CD.levelsByUser[ui] || [])) {
+      if (lvl.r === 0) continue;
+      if (winIdx !== null && lvl.w !== winIdx) continue;
+      if (!scaleIndices.has(lvl.s)) continue;
+      if (lvl.r > maxRank) maxRank = lvl.r;
+    }
+    counts[maxRank]++;
   }
   return counts;
 }
@@ -277,9 +355,20 @@ function aggregateReadiness(userIndices, domain, windowName, languageFilter) {
   return counts;
 }
 
+// Per-scale skill descriptions (bullets per age band) — sourced from
+// asm_skills_by_age.csv. Loaded asynchronously at startup; keyed by scale code.
+let SKILLS_BY_AGE = {};
+
 async function loadComputed() {
-  const r = await fetch('data/computed.json');
+  // Cache-buster query string so browsers don't keep stale data after preprocessor runs.
+  const v = Date.now();
+  const r = await fetch('data/computed.json?v=' + v);
   CD.raw = await r.json();
+  // Skills file (best-effort — silent failure leaves bullets empty)
+  try {
+    const sr = await fetch('data/skills_by_age.json?v=' + v);
+    if (sr.ok) SKILLS_BY_AGE = await sr.json();
+  } catch (e) { /* no-op */ }
   // Build indices
   CD.raw.windows.forEach((w, i) => { CD.windowIdx[w] = i; });
   CD.scaleByIdx = CD.raw.scales;
@@ -558,6 +647,12 @@ const SP = {
 const state = {
   report: 'student-levels',
   role: 'district',   // 'district' | 'school'
+  // Two filter sets:
+  //   filters: COMMITTED values used by render. Only update when "Generate Report"
+  //            is clicked (or on Reset/role-switch). Threshold settings are an
+  //            exception — they apply immediately since they're display options.
+  //   pendingFilters: what the user has SELECTED in the dropdowns. The filter card
+  //            shows these. They become committed only on Generate Report.
   filters: {
     window: 'Spring 2026',  // most-recent real window (overridden after CD loads)
     domain: 'Overview',
@@ -568,6 +663,16 @@ const state = {
     // Display thresholds — configurable so we can balance SPEC strictness vs. data coverage.
     completionMode: 'spec',   // 'spec' | 'soft50' | 'loose'
     slGate: 'min1',           // 'min1' (any pass) | 'min2' | 'min3' | 'spec'
+  },
+  pendingFilters: {
+    window: 'Spring 2026',
+    domain: 'Overview',
+    language: 'All',
+    school: 'All',
+    cls: 'All',
+    grade: 'All grades',
+    completionMode: 'spec',
+    slGate: 'min1',
   },
   sl: { level: 0, path: [], showAvg: false, expandedRows: new Set() },
   ac: { level: 0, path: [] },
@@ -617,17 +722,27 @@ function calcAverage(vals) {
 }
 
 // Render the continuous average bar (spans all 5 data columns via colspan).
-// Bar + pill tag color = the modal skill band for this row, so it matches the
-// highlighted pill shown when Show Average is off (same data, same color).
+// Bar + pill tag color = the band the AVERAGE falls in (2-3 → age2, 3-4 → age3,
+// 4-5 → age4, ≥5 → kinder). E.g., avg 3.7 lands in age3 → purple bar.
+function avgBand(avg) {
+  if (avg >= 5) return 'kinder';
+  if (avg >= 4) return 'age4';
+  if (avg >= 3) return 'age3';
+  return 'age2';
+}
 function makeAvgBar(vals) {
   const avg = calcAverage(vals);
   if (avg === null) return '<td colspan="5" class="avg-cell"><em style="color:var(--grey-400);font-size:12px;">Not enough data</em></td>';
+  // Round to one decimal up-front so the displayed number, marker position, and
+  // band color all stay consistent. (E.g., a true mean of 3.96 displays as "4.0"
+  // and now bands as age4 — previously the raw 3.96 banded as age3.)
+  const rounded = Math.round(avg * 10) / 10;
   // 5 equal columns (NA, Age 2, Age 3, Age 4, Kinder) at 20% each.
   // Each value unit spans one column: avg=2 → start of Age 2 (20%), avg=3 → start of Age 3 (40%),
   // avg=5 → start of Kinder (80%). So avg=2.5 sits halfway through Age 2.
-  const pctPos = (avg - 1) * 20;
-  const display = avg.toFixed(1);
-  const band = PILL_TYPES[hiIdx(vals)]; // 'age2' | 'age3' | 'age4' | 'kinder'
+  const pctPos = (rounded - 1) * 20;
+  const display = rounded.toFixed(1);
+  const band = avgBand(rounded);
   return `
     <td colspan="5" class="avg-cell">
       <div class="avg-bar-wrap">
@@ -692,7 +807,9 @@ function isLocked() {
    ============================================================ */
 function renderFilterCard() {
   const locked = isLocked();
-  const f = state.filters;
+  // Filter card displays PENDING values (the user's current selection),
+  // while the report below renders from COMMITTED state.filters.
+  const f = state.pendingFilters;
   const isAC = state.report === 'completion';
   const disabled = locked ? 'disabled' : '';
 
@@ -825,10 +942,18 @@ function renderFilterCard() {
    ============================================================ */
 function renderBreadcrumbs(path) {
   if (!path || path.length === 0) return '';
-  const items = path.map((p, i) => {
-    const isLast = i === path.length - 1;
+  // Hide entries the user didn't actually navigate through (drill skipped them).
+  // Original index is preserved so breadcrumb clicks still target the right level.
+  const visible = [];
+  path.forEach((p, originalIdx) => {
+    if (p.skipped) return;
+    visible.push({ ...p, originalIdx });
+  });
+  if (visible.length === 0) return '';
+  const items = visible.map((p, i) => {
+    const isLast = i === visible.length - 1;
     if (isLast) return `<span class="crumb-current">${esc(p.label)}</span>`;
-    return `<a data-action="breadcrumb:${i}">${esc(p.label)}</a>`;
+    return `<a data-action="breadcrumb:${p.originalIdx}">${esc(p.label)}</a>`;
   });
   return `<div class="breadcrumbs">${items.join('<span class="sep"> &gt; </span>')}</div>`;
 }
@@ -862,12 +987,33 @@ function renderToolbar(showToggle = true) {
    RENDER: STUDENT LEVELS TABLE
    ============================================================ */
 
-function slDataCells(vals) {
+// Returns the set of supported module ranks (1-4) for a scale code, taking the
+// UNION across EN + SP versions of that code. Used by standards-mode rendering
+// to mark cells as N/A when a scale doesn't test a particular age band.
+function supportedRanksForCode(domain, code) {
+  if (!CD.ready) return new Set();
+  const ranks = new Set();
+  for (const idx of (CD.scalesByDomain[domain] || [])) {
+    const sc = CD.scaleByIdx[idx];
+    if (sc.code !== code) continue;
+    for (const r of (sc.modules || [])) ranks.add(r);
+  }
+  return ranks;
+}
+
+function slDataCells(vals, naRanks) {
   // vals = counts [na, age2, age3, age4, kinder]
+  // naRanks: optional Set of column indices (1-4) to render as N/A indicator pills
+  //   for scales that don't have that age module (e.g., MAT6a "Add" 2YO/3YO).
   if (state.sl.showAvg) return makeAvgBar(vals);
   const total = vals.reduce((a, b) => a + b, 0);
   const hi = hiIdx(vals);
-  return vals.map((v, i) => `<td>${makePill(v, total, i, i === hi)}</td>`).join('');
+  return vals.map((v, i) => {
+    if (naRanks && naRanks.has(i)) {
+      return `<td><span class="pill pill-na pill-empty" title="This scale does not test this age band">N/A</span></td>`;
+    }
+    return `<td>${makePill(v, total, i, i === hi)}</td>`;
+  }).join('');
 }
 
 function slTheadCells() {
@@ -909,22 +1055,34 @@ function renderSL_L0() {
     // Show standards for the selected domain
     const standards = SL.domainStandards[selectedDomain] || [];
     colHeader = 'Standard';
+    const figmaLang = f.language === 'EN' ? 'English' : f.language === 'SP' ? 'Spanish' : f.language;
     rows = standards.map(std => {
-      const vals = SL.standard[std] || [0, 0, 0, 0, 0];
-      const isExpanded = isAllWindows && state.sl.expandedRows.has(std);
-      // Find scale_idx for this code so per-window aggregation works
-      const scIdx = (CD.scalesByDomain[selectedDomain] || []).find(idx => CD.scaleByIdx[idx].code === std);
+      // std is {code, name} — display the human-readable name, use code as the stable identifier
+      const vals = SL.standard[std.code] || [0, 0, 0, 0, 0];
+      const isExpanded = isAllWindows && state.sl.expandedRows.has(std.code);
+      // Per-window sub-rows: also merge EN + SP versions of this scale code
+      const scIdxs = new Set(
+        (CD.scalesByDomain[selectedDomain] || []).filter(idx => {
+          const sc = CD.scaleByIdx[idx];
+          if (sc.code !== std.code) return false;
+          if (figmaLang !== 'All' && sc.language !== figmaLang) return false;
+          return true;
+        })
+      );
       const subRowsHtml = isExpanded
-        ? renderWindowSubRows(win => aggregateLevels(scope, scIdx, win, f.language, f.grade))
+        ? renderWindowSubRows(win => aggregateLevelsMergedByCode(scope, scIdxs, win, f.language, f.grade))
         : '';
+      // Mark age columns as N/A when this scale doesn't test that age band
+      const supported = supportedRanksForCode(selectedDomain, std.code);
+      const naRanks = new Set([1, 2, 3, 4].filter(r => !supported.has(r)));
       return `<tr>
         <td>
           <div class="dom-cell">
-            ${isAllWindows ? `<button class="expand-chevron${isExpanded ? ' open' : ''}" data-action="sl-toggle-expand:${esc(std)}" title="Expand">&#8964;</button>` : ''}
-            <span class="dom-link" data-action="sl-drill-standard:${esc(std)}">${esc(std)}</span>
+            ${isAllWindows ? `<button class="expand-chevron${isExpanded ? ' open' : ''}" data-action="sl-toggle-expand:${esc(std.code)}" title="Expand">&#8964;</button>` : ''}
+            <span class="dom-link" data-action="sl-drill-standard:${esc(selectedDomain)}|${esc(std.code)}|${esc(std.name)}">${esc(std.name)}</span>
           </div>
         </td>
-        ${slDataCells(vals)}
+        ${slDataCells(vals, naRanks)}
       </tr>${subRowsHtml}`;
     }).join('');
   } else {
@@ -961,7 +1119,7 @@ function renderSL_L0() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 function renderSubRows(domain) {
@@ -1032,7 +1190,7 @@ function renderSL_L1(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L2 – Classes list (after clicking a school)
@@ -1090,10 +1248,14 @@ function renderSL_L2(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
-// L3 – Educator Report (class level)
+// L3 – Educator Class Report — per-scale rows per Figma "class-math" design
+// Each row = one assessment (or one domain when filter=Overview). Collapsed rows
+// show colored level bars with a "Class Score" badge in the column matching the
+// class median. Expanding a row reveals student cards bucketed by their level
+// for that scale, plus a "Not Yet Attempted" section.
 function renderSL_L3(path) {
   const f = state.filters;
   // path = [domain, 'District', school, class]
@@ -1104,87 +1266,253 @@ function renderSL_L3(path) {
 
   const LEVELS = ['age2', 'age3', 'age4', 'kinder'];
   const LEVEL_LABELS = { age2: 'Age 2 Skills', age3: 'Age 3 Skills', age4: 'Age 4 Skills', kinder: 'Kindergarten Skills' };
-  // Convert numeric rank (1-4) to level key
   const RANK_TO_LEVEL = { 1: 'age2', 2: 'age3', 3: 'age4', 4: 'kinder' };
 
   const allWindows = !f.window || f.window === 'All assessment windows';
   const winIdx = allWindows ? null : CD.windowIdx[f.window];
   const langCode = f.language === 'English' ? 'EN' : f.language === 'Spanish' ? 'SP' : 'All';
+  const figmaLang = langCode === 'EN' ? 'English' : langCode === 'SP' ? 'Spanish' : 'All';
 
-  // Eligible students (apply language filter)
-  const eligibleStudents = stuIndices
-    .map(ui => CD.studentByIdx[ui])
-    .filter(s => s && (langCode === 'All' || s.language === langCode));
+  // Apply language filter to the class roster
+  const eligibleStudents = stuIndices.filter(ui => {
+    const s = CD.studentByIdx[ui];
+    return s && (langCode === 'All' || s.language === langCode);
+  });
 
-  // Group students by their level for the primary domain
-  const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
-  for (const stu of eligibleStudents) {
-    const ui = CD.studentIdxByUid[stu.user_id];
-    const targetDomain = drilledDomain === 'Overview' ? 'Overview' : drilledDomain;
-    const rank = studentLevelForDomain(ui, targetDomain, winIdx);
-    if (rank === 0) buckets.notAttempted.push(stu.name);
-    else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+  // Compute per-student rank for a single scale code (max across EN+SP versions).
+  function studentRankForCode(ui, code) {
+    let max = 0;
+    for (const idx of (CD.scalesByDomain[drilledDomain === 'Overview' ? null : drilledDomain] || [])) {
+      const sc = CD.scaleByIdx[idx];
+      if (sc.code !== code) continue;
+      if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
+      for (const lvl of (CD.levelsByUser[ui] || [])) {
+        if (lvl.s !== idx) continue;
+        if (winIdx !== null && lvl.w !== winIdx) continue;
+        if (lvl.r > max) max = lvl.r;
+      }
+    }
+    return max;
   }
 
-  // Class score = median rank across students who have any data
-  const classRanks = eligibleStudents
-    .map(stu => studentLevelForDomain(CD.studentIdxByUid[stu.user_id], drilledDomain, winIdx))
-    .filter(r => r > 0);
-  classRanks.sort((a, b) => a - b);
-  const classScoreRank = classRanks.length ? classRanks[Math.floor((classRanks.length - 1) / 2)] : 0;
-  const classScoreLevel = RANK_TO_LEVEL[classScoreRank] || null;
+  // Compute per-row data: { code, name, supported, classScoreRank, buckets }
+  // For drilled-into Overview: rows are 4 domains.
+  // For drilled-into specific domain: rows are scales of that domain.
+  // For drilled-into specific standard: just one row for that scale.
+  let rowsData;
+  const drilledEntry = path[0];
+  if (drilledEntry && drilledEntry.isStandard) {
+    const dom = drilledEntry.scaleDomain;
+    const code = drilledEntry.scaleCode;
+    const supported = supportedRanksForCode(dom, code);
+    const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
+    const ranks = [];
+    // Inline studentRankForCode using the standard's domain (overrides the closure's drilledDomain)
+    const rankForCode = (ui) => {
+      let max = 0;
+      for (const idx of (CD.scalesByDomain[dom] || [])) {
+        const sc = CD.scaleByIdx[idx];
+        if (sc.code !== code) continue;
+        if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
+        for (const lvl of (CD.levelsByUser[ui] || [])) {
+          if (lvl.s !== idx) continue;
+          if (winIdx !== null && lvl.w !== winIdx) continue;
+          if (lvl.r > max) max = lvl.r;
+        }
+      }
+      return max;
+    };
+    for (const ui of eligibleStudents) {
+      const stu = CD.studentByIdx[ui];
+      const rank = rankForCode(ui);
+      if (rank === 0) buckets.notAttempted.push(stu.name);
+      else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+      if (rank > 0) ranks.push(rank);
+    }
+    ranks.sort((a, b) => a - b);
+    const csRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
+    rowsData = [{ code, name: drilledEntry.label, supported, classScoreRank: csRank, buckets }];
+  } else if (drilledDomain === 'Overview') {
+    rowsData = SKILL_DOMAINS.map(domain => {
+      const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
+      const ranks = [];
+      for (const ui of eligibleStudents) {
+        const rank = studentLevelForDomain(ui, domain, winIdx);
+        const stu = CD.studentByIdx[ui];
+        if (rank === 0) buckets.notAttempted.push(stu.name);
+        else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+        if (rank > 0) ranks.push(rank);
+      }
+      ranks.sort((a, b) => a - b);
+      const csRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
+      return {
+        code: domain, name: domain, supported: new Set([1,2,3,4]),
+        classScoreRank: csRank, buckets,
+      };
+    });
+  } else {
+    const scales = SCALE_DISPLAY[drilledDomain] || [];
+    rowsData = scales.map(std => {
+      const supported = supportedRanksForCode(drilledDomain, std.code);
+      const buckets = { notAttempted: [], age2: [], age3: [], age4: [], kinder: [] };
+      const ranks = [];
+      for (const ui of eligibleStudents) {
+        const rank = studentRankForCode(ui, std.code);
+        const stu = CD.studentByIdx[ui];
+        if (rank === 0) buckets.notAttempted.push(stu.name);
+        else buckets[RANK_TO_LEVEL[rank]].push(stu.name);
+        if (rank > 0) ranks.push(rank);
+      }
+      ranks.sort((a, b) => a - b);
+      const csRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
+      return { code: std.code, name: std.name, supported, classScoreRank: csRank, buckets };
+    });
+  }
 
+  // Header (5 cols: Standard | Age 2 | Age 3 | Age 4 | Kindergarten)
+  const headerLabel = drilledDomain === 'Overview' ? 'Domain' : 'Standard';
   const headerCols = LEVELS.map(lv => {
-    const isScore = lv === classScoreLevel;
     return `<th>
-      <div class="edu-col-header ${lv}${isScore ? ' class-score' : ''}">
-        ${isScore ? '<div class="class-score-badge">Class Score</div>' : ''}
-        <div style="font-weight:600;">${LEVEL_LABELS[lv]}</div>
+      <div class="edu-col-header ${lv}">
+        <div style="font-size:14px;font-weight:600;">${LEVEL_LABELS[lv]}</div>
       </div>
     </th>`;
   }).join('');
 
-  const notAttemptedCell = buckets.notAttempted.length
-    ? `<td class="edu-cell not-attempted">
-        <div class="not-attempted-label">Not Yet Attempted</div>
-        ${buckets.notAttempted.map(n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
-      </td>`
-    : '';
+  // Per-row rendering. When drilled into a single standard, force expansion since
+  // collapsing would leave an empty page.
+  const forceExpand = drilledEntry && drilledEntry.isStandard;
+  const rowsHtml = rowsData.map(row => {
+    const isExpanded = forceExpand || state.sl.expandedRows.has(row.code);
+    const csLevel = RANK_TO_LEVEL[row.classScoreRank] || null;
 
-  const studentCols = LEVELS.map(lv => {
-    const students = buckets[lv] || [];
-    const isScore = lv === classScoreLevel;
-    return `<td class="edu-cell ${lv}${isScore ? ' class-score' : ''}">
-      ${students.map(n => `<div class="student-card" data-action="sl-drill-student:${esc(n)}">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
-    </td>`;
-  }).join('');
+    if (!isExpanded) {
+      // Collapsed: scale name + colored bars in level columns; "Class Score" badge in
+      // the column matching the class median.
+      const cells = LEVELS.map(lv => {
+        const supportedRank = { age2: 1, age3: 2, age4: 3, kinder: 4 }[lv];
+        const isSupported = row.supported.has(supportedRank);
+        const isScore = lv === csLevel;
+        if (!isSupported) {
+          return `<td class="edu-cell-collapsed na"><span class="edu-na">N/A</span></td>`;
+        }
+        return `<td class="edu-cell-collapsed">
+          <div class="edu-bar ${lv}${isScore ? ' is-score' : ''}">
+            ${isScore ? '<span class="edu-class-score-label">Class Score</span>' : ''}
+          </div>
+        </td>`;
+      }).join('');
+      return `<tr class="edu-row-collapsed">
+        <td>
+          <div class="edu-domain-cell">
+            <button class="expand-chevron" data-action="sl-toggle-expand:${esc(row.code)}" title="Expand">&#8964;</button>
+            <span style="font-size:14px;font-weight:600;">${esc(row.name)}</span>
+          </div>
+        </td>
+        ${cells}
+      </tr>`;
+    }
 
-  // Other domain rows: median rank for each, mapped to a single highlighted column
-  const otherDomains = SKILL_DOMAINS.filter(d => d !== drilledDomain);
-  const otherRows = otherDomains.map(domain => {
-    const ranks = eligibleStudents
-      .map(stu => studentLevelForDomain(CD.studentIdxByUid[stu.user_id], domain, winIdx))
-      .filter(r => r > 0);
-    ranks.sort((a, b) => a - b);
-    const scoreRank = ranks.length ? ranks[Math.floor((ranks.length - 1) / 2)] : 0;
-    const scoreLevel = RANK_TO_LEVEL[scoreRank] || null;
-    const barCols = LEVELS.map(lv => {
-      return `<td class="domain-bar-cell">
-        <div class="domain-bar">
-          <div class="domain-bar-seg ${lv === scoreLevel ? lv : 'blank'}" style="flex:1;"></div>
-        </div>
+    // Expanded: scale name + students per level (Class Score column highlighted).
+    const cells = LEVELS.map(lv => {
+      const supportedRank = { age2: 1, age3: 2, age4: 3, kinder: 4 }[lv];
+      const isSupported = row.supported.has(supportedRank);
+      const isScore = lv === csLevel;
+      if (!isSupported) {
+        return `<td class="edu-cell ${lv}"><div class="edu-na-block">N/A</div></td>`;
+      }
+      const students = row.buckets[lv] || [];
+      // Skill bullets — only show when drilled into a specific scale (Overview rows
+      // aren't per-scale; bullets only exist per-(scale, age band) per the SPEC CSV)
+      const bullets = (drilledDomain !== 'Overview' && SKILLS_BY_AGE[row.code] && SKILLS_BY_AGE[row.code][lv]) || [];
+      const bulletsHtml = bullets.length
+        ? `<ul class="edu-skill-bullets">${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`
+        : '';
+      return `<td class="edu-cell ${lv}${isScore ? ' class-score' : ''}">
+        ${isScore ? `<div class="edu-class-score-band ${lv}">Class Score</div>` : ''}
+        ${bulletsHtml}
+        ${students.map(n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
       </td>`;
     }).join('');
-    return `<tr>
+    const naBanner = row.buckets.notAttempted.length
+      ? `<tr class="edu-row-not-attempted">
+          <td colspan="5">
+            <div class="edu-na-section">
+              <div class="edu-na-label">Not Yet Attempted</div>
+              <div class="edu-na-students">
+                ${row.buckets.notAttempted.map(n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`).join('')}
+              </div>
+            </div>
+          </td>
+        </tr>`
+      : '';
+    return `<tr class="edu-row-expanded">
       <td>
         <div class="edu-domain-cell">
-          <button class="edu-expand-btn">&#8964;</button>
-          <span style="font-size:13px;font-weight:500;">${esc(domain)}</span>
+          <button class="expand-chevron open" data-action="sl-toggle-expand:${esc(row.code)}" title="Collapse">&#8964;</button>
+          <span style="font-size:14px;font-weight:600;">${esc(row.name)}</span>
         </div>
       </td>
-      ${barCols}
-    </tr>`;
+      ${cells}
+    </tr>${naBanner}`;
   }).join('');
+
+  // For the isStandard case (single scale fully expanded), render the Figma's
+  // class-math grid layout instead of the table-based fallback below.
+  if (drilledEntry && drilledEntry.isStandard && rowsData.length === 1) {
+    const row = rowsData[0];
+    const csLevel = RANK_TO_LEVEL[row.classScoreRank] || null;
+    const subtitle = row.name; // scale name as subtitle below the domain
+    const studentCard = n => `<div class="student-card">${makeAvatar(n)}<span>${esc(n)}</span></div>`;
+    const levelCell = lv => {
+      const supportedRank = { age2: 1, age3: 2, age4: 3, kinder: 4 }[lv];
+      const isSupported = row.supported.has(supportedRank);
+      const isScore = lv === csLevel;
+      if (!isSupported) {
+        return `<div class="edu-g-cell level ${lv} na">N/A</div>`;
+      }
+      const bullets = (SKILLS_BY_AGE[row.code] && SKILLS_BY_AGE[row.code][lv]) || [];
+      const bulletsHtml = bullets.length
+        ? `<ul class="edu-g-bullets">${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`
+        : '';
+      const students = row.buckets[lv] || [];
+      return `<div class="edu-g-cell level ${lv}${isScore ? ' class-score' : ''}">
+        ${isScore ? `<div class="edu-g-score-band ${lv}">Class Score</div>` : ''}
+        <div class="edu-g-cell-body">
+          ${bulletsHtml}
+          ${students.map(studentCard).join('')}
+        </div>
+      </div>`;
+    };
+    return `
+      ${renderBreadcrumbs(path)}
+      <div class="report-toolbar">
+        <div class="toolbar-left"></div>
+        <div class="toolbar-center">${esc(getReportTitle())} <span class="info-icon">&#9432;</span></div>
+        <div class="toolbar-right"><button class="btn btn-ghost">&#11015; Download CSV</button></div>
+      </div>
+      <div class="edu-grid">
+        <div class="edu-g-h domain">Domain</div>
+        <div class="edu-g-h na"></div>
+        <div class="edu-g-h age2">Age 2 Skills</div>
+        <div class="edu-g-h age3">Age 3 Skills</div>
+        <div class="edu-g-h age4">Age 4 Skills</div>
+        <div class="edu-g-h kinder">Kindergarten Skills</div>
+
+        <div class="edu-g-cell domain-label">
+          <div class="title">${esc(drilledEntry.scaleDomain || drilledDomain)}</div>
+          <div class="subtitle">${esc(subtitle)}</div>
+        </div>
+        <div class="edu-g-cell not-attempted-col">
+          <div class="edu-g-na-tag">Not Yet Attempted</div>
+          <div class="edu-g-na-list">
+            ${row.buckets.notAttempted.map(studentCard).join('')}
+          </div>
+        </div>
+        ${LEVELS.map(levelCell).join('')}
+      </div>
+      <div class="report-footer" style="margin-top:12px;">Last Updated: April 27, 2026</div>`;
+  }
 
   return `
     ${renderBreadcrumbs(path)}
@@ -1197,26 +1525,14 @@ function renderSL_L3(path) {
       <table class="edu-report">
         <thead>
           <tr>
-            <th>Domain</th>
+            <th>${esc(headerLabel)}</th>
             ${headerCols}
           </tr>
         </thead>
-        <tbody>
-          <tr>
-            <td>
-              <div class="edu-domain-cell">
-                <button class="edu-expand-btn open">&#8964;</button>
-                <span style="font-size:13px;font-weight:600;">${esc(drilledDomain)}</span>
-              </div>
-            </td>
-            ${notAttemptedCell}
-            ${studentCols}
-          </tr>
-          ${otherRows}
-        </tbody>
+        <tbody>${rowsHtml}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 /* ============================================================
@@ -1268,7 +1584,7 @@ function renderAC_L0() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L1 – Schools
@@ -1312,7 +1628,7 @@ function renderAC_L1(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L2 – Classes
@@ -1364,7 +1680,7 @@ function renderAC_L2(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L3 – Students
@@ -1427,7 +1743,7 @@ function renderAC_L3(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 /* ============================================================
@@ -1481,7 +1797,7 @@ function renderSP_L0() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L1 – Schools
@@ -1525,7 +1841,7 @@ function renderSP_L1(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L2 – Classes
@@ -1576,7 +1892,7 @@ function renderSP_L2(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 // L3 – Students
@@ -1662,7 +1978,7 @@ function renderSP_L3(path) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <div class="report-footer">Last Updated: Sep 30, 2025</div>`;
+    <div class="report-footer">Last Updated: April 27, 2026</div>`;
 }
 
 /* ============================================================
@@ -1716,13 +2032,11 @@ function getPageTitle() {
 }
 
 function getReportTitle() {
-  const f = state.filters;
-  // Window is "Fall 2025" / "Winter 2025" / "Spring 2026" or "All assessment windows"
-  const winLabel = f.window === 'All assessment windows' ? 'All windows' : f.window;
+  // Window is selected via filter; the title itself stays clean.
   const titles = {
-    'student-levels':    `${winLabel} Student Learning Levels`,
-    'completion':        `${winLabel} Assessment Completion`,
-    'student-placement': `${winLabel} Grade-Level Readiness`,
+    'student-levels':    'Student Learning Levels',
+    'completion':        'Assessment Completion',
+    'student-placement': 'Grade-Level Readiness',
   };
   return titles[state.report] || '';
 }
@@ -1807,46 +2121,73 @@ function refreshSL() {
   SL.domain.Overview = aggregateLevels(scope, 'Overview', win, lang, grade);
   for (const d of SKILL_DOMAINS) {
     SL.domain[d] = aggregateLevels(scope, d, win, lang, grade);
-    SL.domainStandards[d] = (CD.scalesByDomain[d] || [])
-      .map(idx => CD.scaleByIdx[idx])
-      .filter(sc => figmaLang === 'All' || sc.language === figmaLang)
-      .map(sc => sc.code);
+    // Use the canonical SPEC list (name + order). Filter to only include codes
+    // for which the dataset has at least one scale matching the language filter.
+    const codesPresent = new Set();
+    for (const idx of (CD.scalesByDomain[d] || [])) {
+      const sc = CD.scaleByIdx[idx];
+      if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
+      codesPresent.add(sc.code);
+    }
+    SL.domainStandards[d] = (SCALE_DISPLAY[d] || []).filter(item => codesPresent.has(item.code));
   }
   SL.mathStandards = SL.domainStandards.Math || [];
 
-  // Build per-scale rollups when a specific domain filter is selected (L0 standards mode)
+  // Build per-scale rollups when a specific domain filter is selected (L0 standards mode).
+  // Group by scale code so EN + SP versions of the same code merge into one row;
+  // each student contributes their HIGHEST rank across the merged scales (per SPEC).
   if (f.domain && f.domain !== 'Overview' && CD.scalesByDomain[f.domain]) {
+    const codeToIdxs = {};
     for (const idx of CD.scalesByDomain[f.domain]) {
       const sc = CD.scaleByIdx[idx];
       if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
-      SL.standard[sc.code] = aggregateLevels(scope, idx, win, lang, grade);
+      (codeToIdxs[sc.code] = codeToIdxs[sc.code] || []).push(idx);
+    }
+    for (const [code, idxs] of Object.entries(codeToIdxs)) {
+      SL.standard[code] = aggregateLevelsMergedByCode(scope, new Set(idxs), win, lang, grade);
     }
   }
 
-  // L1 (Schools view): aggregate per-school for the drilled-into domain
-  const drilledDomain = state.sl.level >= 1 ? state.sl.path[0].label : null;
-  if (drilledDomain) {
-    SL.schools.District = aggregateLevels(scope, drilledDomain, win, lang, grade);
+  // L1 (Schools view): aggregate per-school for either the drilled-into domain
+  // OR a specific standard scale (when the user drilled in from L0 standards mode).
+  const drilledEntry = state.sl.level >= 1 ? state.sl.path[0] : null;
+  const drilledLabel = drilledEntry ? drilledEntry.label : null;
+  // Build an aggregator that knows whether we're drilling into a domain or a single scale code.
+  const aggregateDrilled = (stuIndices, windowName) => {
+    if (!drilledEntry) return [0, 0, 0, 0, 0];
+    if (drilledEntry.isStandard) {
+      // Aggregate as a single scale code, merging EN + SP versions
+      const scIdxs = new Set();
+      for (const idx of (CD.scalesByDomain[drilledEntry.scaleDomain] || [])) {
+        const sc = CD.scaleByIdx[idx];
+        if (sc.code !== drilledEntry.scaleCode) continue;
+        if (figmaLang !== 'All' && sc.language !== figmaLang) continue;
+        scIdxs.add(idx);
+      }
+      return aggregateLevelsMergedByCode(stuIndices, scIdxs, windowName, lang, grade);
+    }
+    return aggregateLevels(stuIndices, drilledEntry.label, windowName, lang, grade);
+  };
+  if (drilledLabel) {
+    SL.schools.District = aggregateDrilled(scope, win);
     for (const sch of CD.raw.schools) {
       const stuIndices = CD.studentsBySchool[sch.school_id] || [];
-      SL.schools[sch.name] = aggregateLevels(stuIndices, drilledDomain, win, lang, grade);
+      SL.schools[sch.name] = aggregateDrilled(stuIndices, win);
     }
   }
 
-  // L2 (Classes view): aggregate per-class for the drilled-into school + domain
-  // path = [domain, 'District' literal, school, class?]
+  // L2 (Classes view): aggregate per-class for the drilled-into school + scope
+  // path = [scope, 'District' literal, school, class?]
   const drilledSchool = state.sl.level >= 2 ? (state.sl.path[2] ? state.sl.path[2].label : null) : null;
-  if (drilledDomain && drilledSchool) {
+  if (drilledLabel && drilledSchool) {
     const schObj = CD.raw.schools.find(s => s.name === drilledSchool);
     if (schObj) {
       const schoolStudents = CD.studentsBySchool[schObj.school_id] || [];
-      SL.classes[`${drilledSchool} total`] = aggregateLevels(
-        schoolStudents, drilledDomain, win, lang, grade
-      );
+      SL.classes[`${drilledSchool} total`] = aggregateDrilled(schoolStudents, win);
       for (const cls of CD.raw.classes) {
         if (cls.school_id !== schObj.school_id) continue;
         const stuIndices = CD.studentsByGroup[cls.group_id] || [];
-        SL.classes[cls.name] = aggregateLevels(stuIndices, drilledDomain, win, lang, grade);
+        SL.classes[cls.name] = aggregateDrilled(stuIndices, win);
       }
     }
   }
@@ -1907,15 +2248,22 @@ function wireEvents() {
       const name = cdd.dataset.name;
       const val = option.dataset.value;
       cdd.classList.remove('open');
-      if (!isLocked() && state.filters[name] !== val) {
+      if (isLocked() || state.pendingFilters[name] === val) return;
+
+      // Threshold settings are display options — apply immediately to both pending
+      // and committed so the report updates without "Generate Report".
+      if (name === 'completionMode' || name === 'slGate') {
+        state.pendingFilters[name] = val;
         state.filters[name] = val;
-        if (name === 'school') state.filters.cls = 'All';
-        // Threshold settings are display options — don't trigger the "regenerate" prompt.
-        if (name !== 'completionMode' && name !== 'slGate') {
-          state.dirty = true;
-        }
         render();
+        return;
       }
+
+      // Other filters: stage in pendingFilters until "Generate Report" is clicked.
+      state.pendingFilters[name] = val;
+      if (name === 'school') state.pendingFilters.cls = 'All';
+      state.dirty = true;
+      render();
       return;
     }
 
@@ -1973,17 +2321,77 @@ function handleClick(e) {
     return;
   }
 
-  // Student Levels drilling
+  // Student Levels drilling. When the user has a specific class selected in the
+  // filter, drilling a domain or standard jumps STRAIGHT to the class view (skipping
+  // the school + class lists). Same idea for school: a specific school skips L1.
+  // Helper resolves the (school name, class name) to attach to the drill path.
+  const drillContext = () => {
+    const f = state.filters;
+    let schoolName = null, className = null;
+    if (f.cls && f.cls !== 'All') {
+      const cls = (CD.raw && CD.raw.classes || []).find(c => c.name === f.cls);
+      if (cls) {
+        className = cls.name;
+        const sch = (CD.raw && CD.raw.schools || []).find(s => s.school_id === cls.school_id);
+        if (sch) schoolName = sch.name;
+      }
+    } else if (f.school && f.school !== 'All') {
+      schoolName = f.school;
+    }
+    return { schoolName, className };
+  };
+
+  // Path entries that the user *skipped* (didn't actually navigate through) get
+  // a `skipped: true` flag so the breadcrumb hides them.
   if (action && action.startsWith('sl-drill-domain:')) {
     const domain = action.split(':').slice(1).join(':');
-    state.sl.level = 1;
-    state.sl.path = [{ label: domain }, { label: 'District' }];
+    const { schoolName, className } = drillContext();
+    if (className) {
+      state.sl.level = 3;
+      state.sl.path = [
+        { label: domain },
+        { label: 'District', skipped: true },
+        { label: schoolName || '', skipped: true },
+        { label: className },
+      ];
+    } else if (schoolName) {
+      state.sl.level = 2;
+      state.sl.path = [
+        { label: domain },
+        { label: 'District', skipped: true },
+        { label: schoolName },
+      ];
+    } else {
+      state.sl.level = 1;
+      state.sl.path = [{ label: domain }, { label: 'District' }];
+    }
     render(); return;
   }
   if (action && action.startsWith('sl-drill-standard:')) {
-    const std = action.split(':').slice(1).join(':');
-    state.sl.level = 1;
-    state.sl.path = [{ label: std }, { label: 'District' }];
+    // Format: sl-drill-standard:<domain>|<scaleCode>|<displayName>
+    const rest = action.slice('sl-drill-standard:'.length);
+    const [domain, code, name] = rest.split('|');
+    const head = { label: name || code, isStandard: true, scaleCode: code, scaleDomain: domain };
+    const { schoolName, className } = drillContext();
+    if (className) {
+      state.sl.level = 3;
+      state.sl.path = [
+        head,
+        { label: 'District', skipped: true },
+        { label: schoolName || '', skipped: true },
+        { label: className },
+      ];
+    } else if (schoolName) {
+      state.sl.level = 2;
+      state.sl.path = [
+        head,
+        { label: 'District', skipped: true },
+        { label: schoolName },
+      ];
+    } else {
+      state.sl.level = 1;
+      state.sl.path = [head, { label: 'District' }];
+    }
     render(); return;
   }
   if (action && action.startsWith('sl-drill-school:')) {
@@ -2101,6 +2509,9 @@ function triggerGenerate() {
   const overlay = document.getElementById('loadingOverlay');
   overlay.classList.add('open');
 
+  // Commit pending filter selections — only now does the report use them.
+  state.filters = { ...state.pendingFilters };
+
   // Reset any active cascade when re-generating
   state.sl.level = 0; state.sl.path = []; state.sl.expandedRows = new Set();
   state.ac.level = 0; state.ac.path = [];
@@ -2137,7 +2548,7 @@ function triggerGenerate() {
 }
 
 function resetFilters() {
-  state.filters = {
+  const defaults = {
     window:   SL_CURRENT_WINDOW || 'Spring 2026',
     domain:   'Overview',
     language: 'All',
@@ -2147,6 +2558,12 @@ function resetFilters() {
     completionMode: 'spec',
     slGate:   'min1',
   };
+  // Reset only sets the PENDING values — user still has to click Generate Report
+  // for the data to update. (Threshold settings apply immediately, but they reset
+  // along with the rest here.)
+  state.pendingFilters = { ...defaults };
+  state.filters.completionMode = defaults.completionMode;
+  state.filters.slGate = defaults.slGate;
   state.dirty = true;
   render();
 }
@@ -2265,9 +2682,10 @@ function switchReport(report) {
   state.sl.level = 0; state.sl.path = []; state.sl.expandedRows = new Set();
   state.ac.level = 0; state.ac.path = [];
   state.sp.level = 0; state.sp.path = [];
-  // Set domain filter appropriately
+  // Set domain filter appropriately (both committed and pending)
   if (report === 'completion') {
-    state.filters.domain = 'Overview'; // locked to Overview
+    state.filters.domain = 'Overview';
+    state.pendingFilters.domain = 'Overview';
   }
   render();
 }
@@ -2296,14 +2714,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (role === state.role) return;
     state.role = role;
     document.querySelectorAll('.role-btn').forEach(b => b.classList.toggle('active', b.dataset.role === role));
-    // Reset school/class when switching roles
-    if (role === 'school') {
-      state.filters.school = (CD.raw && CD.raw.schools && CD.raw.schools[0]) ? CD.raw.schools[0].name : 'All';
-      state.filters.cls = 'All';
-    } else {
-      state.filters.school = 'All';
-      state.filters.cls = 'All';
-    }
+    // Reset school/class when switching roles (both committed and pending)
+    const newSchool = role === 'school'
+      ? ((CD.raw && CD.raw.schools && CD.raw.schools[0]) ? CD.raw.schools[0].name : 'All')
+      : 'All';
+    state.filters.school = newSchool;
+    state.filters.cls = 'All';
+    state.pendingFilters.school = newSchool;
+    state.pendingFilters.cls = 'All';
     // Reset cascades
     state.sl.level = 0; state.sl.path = [];
     state.ac.level = 0; state.ac.path = [];
@@ -2354,6 +2772,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         const newest = CD.raw.windows.slice().sort((a, b) => order(b) - order(a))[0];
         if (state.filters.window !== newest) state.filters.window = newest;
+        state.pendingFilters.window = newest;
       }
       render();
     })
