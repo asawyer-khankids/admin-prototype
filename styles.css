@@ -467,7 +467,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
   background: white; border: 1px solid var(--grey-200);
   border-radius: var(--radius);
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  /* `clip` keeps the rounded-corner clipping but, unlike `hidden`, does NOT
+     establish a scroll container. Sticky thead/pinned rows can therefore stick
+     relative to the page viewport instead of being trapped inside this block. */
+  overflow: clip;
 }
 
 /* Breadcrumbs */
@@ -533,14 +536,30 @@ nav { flex: 1; padding: 8px 8px 20px; }
    ============================================= */
 .tbl-levels {
   width: 100%; border-collapse: collapse;
+  /* fixed layout so width: 20% on the data columns is binding, not just a hint —
+     ensures the 5 column headers center over the equally-flexed placeholder pills */
+  table-layout: fixed;
 }
 .tbl-levels th {
   font-size: 12px; font-weight: 600;
   padding: 10px 6px; text-align: center;
   border-bottom: 1px solid var(--grey-200);
   white-space: nowrap;
+  box-sizing: border-box;
+  /* Keep column headers visible as the user scrolls long lists. */
+  position: sticky; top: 0; z-index: 4;
+  background: white;
 }
-.tbl-levels th:first-child { text-align: left; padding-left: 20px; padding-right: 12px; }
+.tbl-levels th:first-child {
+  text-align: left;
+  padding-left: 20px; padding-right: 12px;
+  width: 18%;
+}
+.tbl-levels th:not(:first-child) {
+  /* 5 data cols share the remaining 82%; equal widths align headers above the
+     equally-flexed Show Average placeholder pills */
+  width: 16.4%;
+}
 .tbl-levels th.col-na     { color: var(--grey-500); }
 .tbl-levels th.col-age2   { color: var(--pink-500); }
 .tbl-levels th.col-age3   { color: var(--purple-500); }
@@ -557,7 +576,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .tbl-levels td:not(:first-child) { text-align: center; }
 .tbl-levels tbody tr:last-child td { border-bottom: none; }
 .tbl-levels tbody tr:hover:not(.sub-row):not(.pinned) td { background: var(--grey-100); }
-.tbl-levels tr.pinned td { background: var(--indigo-100); }
+/* Pinned rows (District at L1, "{school} total" at L2, "{class}" at L3) stay
+   stuck to the top under the column headers as users scroll the list. */
+.tbl-levels tr.pinned td {
+  background: var(--indigo-100);
+  position: sticky; top: 36px; z-index: 3;
+}
 
 /* Domain cell */
 .dom-cell {
@@ -577,8 +601,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .dom-link:hover { color: var(--indigo-400); }
 .star-badge { color: var(--indigo-300); margin-left: 6px; font-size: 13px; }
 
-/* Window sub-rows (All assessment windows mode) */
-.window-sub-row td { background: var(--grey-50, #fafafa); }
+/* Window sub-rows (All assessment windows mode) — distinctly darker than data
+   rows so the expanded fall/spring rows clearly read as nested under their
+   parent. */
+.window-sub-row td { background: #d8dde8; }
 .window-sub-label {
   padding-left: 44px !important;
   font-size: 13px; font-weight: 500;
@@ -604,7 +630,18 @@ nav { flex: 1; padding: 8px 8px 20px; }
   transition: filter 0.15s, box-shadow 0.15s;
 }
 .pill:hover { filter: brightness(0.96); box-shadow: 0 0 0 2px rgba(10,42,102,0.15); }
-.pill-na     { background: var(--grey-200); }
+/* Slightly darker so the pill stays visible on the indigo-100 pinned-row background. */
+.pill-na     { background: var(--grey-300); color: var(--grey-600); }
+/* "N/A" pill for age bands a scale doesn't test (e.g., MAT6a Add only tests
+   4YO+KG, so its 2YO/3YO cells get this treatment). */
+.pill.pill-empty {
+  background: transparent;
+  border: 1.5px dashed var(--grey-300);
+  color: var(--grey-400);
+  cursor: default;
+  font-size: 12px;
+}
+.pill.pill-empty:hover { filter: none; box-shadow: none; }
 .pill-age2   { background: var(--pink-100); }
 .pill-age3   { background: var(--purple-100); }
 .pill-age4   { background: var(--blue-100); }
@@ -626,6 +663,14 @@ nav { flex: 1; padding: 8px 8px 20px; }
    STACKED BAR TABLE (Completion / Placement)
    ============================================= */
 .tbl-bars { width: 100%; border-collapse: collapse; }
+.tbl-bars th {
+  font-size: 12px; font-weight: 600;
+  padding: 10px 20px; text-align: left;
+  color: var(--grey-500);
+  border-bottom: 1px solid var(--grey-200);
+  background: white;
+  position: sticky; top: 0; z-index: 4;
+}
 .tbl-bars td {
   padding: 0 20px; height: 78px;
   vertical-align: middle;
@@ -634,7 +679,10 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .tbl-bars td:first-child { width: 200px; }
 .tbl-bars tbody tr:last-child td { border-bottom: none; }
 .tbl-bars tbody tr:hover td { background: var(--grey-100); }
-.tbl-bars tr.pinned td { background: var(--indigo-100); }
+.tbl-bars tr.pinned td {
+  background: var(--indigo-100);
+  position: sticky; top: 36px; z-index: 3;
+}
 
 .bar-label {
   font-size: 14px; font-weight: 500;
@@ -700,6 +748,7 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .edu-col-header.age3   { background: var(--purple-100); color: var(--purple-500); }
 .edu-col-header.age4   { background: var(--blue-100); color: var(--blue-500); }
 .edu-col-header.kinder { background: var(--teal-100); color: var(--teal-400); }
+.edu-col-header.not-attempted-header { background: var(--grey-600); color: white; }
 
 .class-score-badge {
   display: inline-block;
@@ -714,6 +763,29 @@ nav { flex: 1; padding: 8px 8px 20px; }
 
 .skill-bullets { font-size: 11px; font-weight: 400; margin-top: 4px; line-height: 1.4; opacity: 0.8; }
 .skill-bullets li { list-style: disc inside; margin-left: 2px; }
+
+/* Skill description bullets at the top of each level cell in the L3 expanded view
+   (per Figma class-math design). Sourced from asm_skills_by_age.csv. */
+.edu-skill-bullets {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--grey-600);
+}
+.edu-skill-bullets li {
+  position: relative;
+  padding-left: 14px;
+  margin-bottom: 6px;
+}
+.edu-skill-bullets li::before {
+  content: '•';
+  position: absolute;
+  left: 4px;
+  color: currentColor;
+  opacity: 0.7;
+}
 
 .edu-report td {
   border-bottom: 1px solid var(--grey-200);
@@ -735,6 +807,181 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .edu-cell.class-score.age4   { background: var(--blue-200); }
 .edu-cell.class-score.kinder { background: var(--teal-200); }
 .edu-cell.not-attempted { background: var(--grey-200); vertical-align: middle; }
+
+/* L3 educator-class single-scale grid (matches Figma class-math layout):
+   Domain | Not Yet Attempted | Age 2 | Age 3 | Age 4 | Kindergarten */
+.edu-grid {
+  display: grid;
+  grid-template-columns: 200px 160px repeat(4, 1fr);
+  background: white;
+  border: 1px solid var(--grey-200);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.edu-g-h {
+  padding: 14px 8px 10px;
+  text-align: center;
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 1px solid var(--grey-200);
+}
+.edu-g-h.domain { text-align: left; padding-left: 20px; color: var(--grey-600); font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 400; }
+.edu-g-h.na { background: white; }
+.edu-g-h.age2   { color: var(--pink-500); }
+.edu-g-h.age3   { color: var(--purple-500); }
+.edu-g-h.age4   { color: var(--blue-500); }
+.edu-g-h.kinder { color: var(--teal-400); }
+
+.edu-g-cell { padding: 12px; }
+.edu-g-cell.domain-label {
+  padding: 16px 20px;
+}
+.edu-g-cell.domain-label .title {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 600; font-size: 16px;
+  color: var(--grey-600);
+  margin-bottom: 2px;
+}
+.edu-g-cell.domain-label .subtitle {
+  font-size: 13px;
+  color: var(--grey-500);
+}
+
+.edu-g-cell.not-attempted-col { padding: 0; }
+.edu-g-na-tag {
+  background: var(--grey-600); color: white;
+  padding: 8px 14px;
+  font-size: 12px; font-weight: 600;
+  text-align: center;
+  border-radius: 4px;
+  margin: 12px 12px 0;
+  display: inline-block;
+}
+.edu-g-na-list {
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.edu-g-cell.level { padding: 0; }
+.edu-g-cell.level.age2   { background: var(--pink-100); }
+.edu-g-cell.level.age3   { background: var(--purple-100); }
+.edu-g-cell.level.age4   { background: var(--blue-100); }
+.edu-g-cell.level.kinder { background: var(--teal-100); }
+.edu-g-cell.level.class-score.age2   { background: var(--pink-200); }
+.edu-g-cell.level.class-score.age3   { background: var(--purple-200); }
+.edu-g-cell.level.class-score.age4   { background: var(--blue-200); }
+.edu-g-cell.level.class-score.kinder { background: var(--teal-200); }
+.edu-g-cell.level.na { background: var(--grey-100); color: var(--grey-400); display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.edu-g-cell-body {
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.edu-g-score-band {
+  padding: 10px;
+  text-align: center;
+  font-size: 14px; font-weight: 600;
+  color: white;
+  font-family: 'Fredoka', sans-serif;
+}
+.edu-g-score-band.age2   { background: var(--pink-500); }
+.edu-g-score-band.age3   { background: var(--purple-500); }
+.edu-g-score-band.age4   { background: var(--blue-500); }
+.edu-g-score-band.kinder { background: var(--teal-400); }
+
+.edu-g-bullets {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--grey-600);
+}
+.edu-g-bullets li {
+  position: relative;
+  padding-left: 14px;
+  margin-bottom: 6px;
+}
+.edu-g-bullets li::before {
+  content: '•';
+  position: absolute;
+  left: 4px;
+  opacity: 0.7;
+}
+
+.edu-g-cell .student-card { background: white; }
+
+/* "Class Score" colored band at the top of the highlighted level column body cell
+   (per Figma class-math design — solid colored bar with white text spanning the
+   full cell width). */
+.edu-class-score-band {
+  margin: -8px -8px 8px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 14px; font-weight: 600;
+  color: white;
+  font-family: 'Fredoka', sans-serif;
+}
+.edu-class-score-band.age2   { background: var(--pink-500); }
+.edu-class-score-band.age3   { background: var(--purple-500); }
+.edu-class-score-band.age4   { background: var(--blue-500); }
+.edu-class-score-band.kinder { background: var(--teal-400); }
+
+/* L3 collapsed-row cells: a colored bar per level, with the class-score column
+   showing a "Class Score" pill instead. */
+.edu-cell-collapsed {
+  padding: 12px 8px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--grey-200);
+  border-left: 1px solid var(--grey-200);
+}
+.edu-cell-collapsed.na { background: var(--grey-100); }
+.edu-cell-collapsed .edu-na { color: var(--grey-400); font-size: 12px; }
+.edu-bar {
+  height: 28px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+}
+.edu-bar.age2   { background: var(--pink-200); }
+.edu-bar.age3   { background: var(--purple-200); }
+.edu-bar.age4   { background: var(--blue-200); }
+.edu-bar.kinder { background: var(--teal-200); }
+.edu-bar.is-score.age2   { background: var(--pink-500); }
+.edu-bar.is-score.age3   { background: var(--purple-500); }
+.edu-bar.is-score.age4   { background: var(--blue-500); }
+.edu-bar.is-score.kinder { background: var(--teal-400); }
+.edu-class-score-label {
+  color: white; font-size: 12px; font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Expanded-row "Not Yet Attempted" banner */
+.edu-row-not-attempted td { padding: 0; border-bottom: 1px solid var(--grey-200); }
+.edu-na-section {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--grey-100);
+  border-top: 1px dashed var(--grey-300);
+}
+.edu-na-label {
+  background: var(--grey-600); color: white;
+  padding: 4px 12px; border-radius: 4px;
+  font-size: 12px; font-weight: 600;
+  white-space: nowrap;
+}
+.edu-na-students {
+  display: flex; gap: 8px; flex-wrap: wrap; flex: 1;
+}
+.edu-na-students .student-card { background: white; }
+
+/* N/A block in expanded rows for unsupported age bands */
+.edu-na-block {
+  height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--grey-400); font-size: 12px;
+  border: 1.5px dashed var(--grey-300);
+  border-radius: 6px;
+  padding: 16px;
+}
 
 .not-attempted-label {
   font-size: 11px; font-weight: 600; color: var(--grey-500);
@@ -842,7 +1089,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
 /* =============================================
    TABLE SCROLL WRAPPER
    ============================================= */
-.tbl-wrap { overflow-x: auto; }
+/* Don't introduce any overflow on this wrapper — sticky thead + pinned rows
+   need the page (not this wrapper) to be the scroll context. Setting
+   overflow-x:auto would force overflow-y:auto per spec, trapping sticky inside
+   a non-scrolling container. The tables use table-layout:fixed + width:100%,
+   so horizontal overflow isn't a concern at typical widths. */
+.tbl-wrap { overflow: visible; }
 
 /* =============================================
    SHOW AVERAGE BAR
@@ -852,10 +1104,13 @@ nav { flex: 1; padding: 8px 8px 20px; }
 /* Show Average — bar sits on a grid of 5 faint placeholder pills (one per column) */
 .avg-bar-wrap { position: relative; height: 34px; }
 
-/* Placeholder pills — one tinted shape per column, shown behind the colored bar */
+/* Placeholder pills — one tinted shape per column, shown behind the colored bar.
+   No gap between pills so each pill spans exactly 20% of the bar width. This
+   keeps the visual column boundaries aligned with the score-to-position math
+   in makeAvgBar() (each integer score = column-boundary multiple of 20%). */
 .avg-placeholders {
   position: absolute; inset: 0;
-  display: flex; gap: 12px;
+  display: flex; gap: 0;
   z-index: 0;
 }
 .avg-pl-pill { flex: 1; height: 34px; border-radius: 8px; }
@@ -944,6 +1199,12 @@ nav { flex: 1; padding: 8px 8px 20px; }
   display: none; position: fixed; inset: 0;
   background: rgba(10,42,102,0.3);
   z-index: 250; align-items: center; justify-content: center;
+  /* Dim covers the whole viewport, but the popup itself is offset by the
+     sidebar width so it centers within the main content area rather than
+     butting up against the nav. Extra right padding keeps the popup from
+     sitting flush against the viewport edge. */
+  padding: 24px 56px 24px calc(var(--sidebar-w) + 24px);
+  overflow-y: auto;
 }
 .popup-overlay.open { display: flex; }
 
@@ -1000,8 +1261,9 @@ nav { flex: 1; padding: 8px 8px 20px; }
 .popup-tbl tbody tr:last-child td { border-bottom: none; }
 .popup-tbl tbody tr:hover td { background: var(--grey-100); }
 
-/* Learning Level cell — colored dot + plain text (per Figma data snapshot popup) */
-.learning-level-cell {
+/* Learning Level + Readiness cells — colored dot + plain text */
+.learning-level-cell,
+.readiness-cell {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 14px; color: var(--grey-600);
 }

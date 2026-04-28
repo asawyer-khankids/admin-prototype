@@ -1,0 +1,285 @@
+{
+  "LIT1a": {
+    "age2": [],
+    "age3": [
+      "Select the rhyming word"
+    ],
+    "age4": [
+      "Select the rhyming word when other words sound alike at the start or end"
+    ],
+    "kinder": [
+      "Select the rhyming word when other words sound alike at the start, middle or end"
+    ]
+  },
+  "LIT1b": {
+    "age2": [],
+    "age3": [],
+    "age4": [
+      "Select the word that matches two sounds spoken and blended (/c/ + /at/ = cat)"
+    ],
+    "kinder": [
+      "Select the word that matches three sounds spoken and blended (/d/ + /o/ + /g/ = dog)",
+      "Select the new word made by adding a sound to another word (/s/ + top = stop)"
+    ]
+  },
+  "LIT1c": {
+    "age2": [],
+    "age3": [
+      "Select the word that completes a compound word ( __ + flower  = sunflower)",
+      "Select the sound that matches a given sound (hear /m/ = select /m/)",
+      "Select the word that begins with a given sound (/b/ = ball)"
+    ],
+    "age4": [
+      "Select the sound that completes a broken-apart word ( __ + /at/ = mat)",
+      "Select the word that begins with the same sound as a given word (mouse = moon)",
+      "Select the word that begins with a given sound (/sh/ = shell)"
+    ],
+    "kinder": [
+      "Select the two sounds that complete a broken-apart word (/c/ + __ + __ = cat)",
+      "Select the sequence of sounds that make up a spoken word (/d/ + /o/ + /g/ = dog)"
+    ]
+  },
+  "LIT1d": {
+    "age2": [],
+    "age3": [],
+    "age4": [],
+    "kinder": [
+      "Select and order letters to spell a CVC word",
+      "Read a CVC word and select the matching picture"
+    ]
+  },
+  "LIT2": {
+    "age2": [],
+    "age3": [
+      "Distinguish print from pictures",
+      "Select the correct way to hold a book",
+      "Select where reading begins and follow the direction on a page"
+    ],
+    "age4": [
+      "Distinguish print from pictures, with distractors",
+      "Select the correct way to hold a book",
+      "Select where reading begins and follow the direction of print (left to right)"
+    ],
+    "kinder": [
+      "Select where reading begins and follow the direction of print (left to right, top to bottom)",
+      "Count the number of words on a page"
+    ]
+  },
+  "LIT3a": {
+    "age2": [],
+    "age3": [
+      "Identify letters by name (common letters)"
+    ],
+    "age4": [
+      "Identify letters by name (less common letters)"
+    ],
+    "kinder": [
+      "Identify letters by name (least common letters)"
+    ]
+  },
+  "LIT3bi": {
+    "age2": [],
+    "age3": [],
+    "age4": [
+      "Identify the consonant letter that matches a given sound (common consonants)",
+      "Identify the sound that matches a given consonant letter (common consonants)"
+    ],
+    "kinder": [
+      "Identify the consonant letter that matches a given sound (less common consonants)",
+      "Match consonant letters with their sounds (less common consonants)"
+    ]
+  },
+  "LIT3bii": {
+    "age2": [],
+    "age3": [],
+    "age4": [
+      "Identify the vowel letter that matches a given sound (short vowels)",
+      "Identify the sound that matches a given vowel letter (short vowels)"
+    ],
+    "kinder": [
+      "Identify the vowel letter that matches a given sound (short and long vowels)",
+      "Match vowel letters with their sounds (long vowels)"
+    ]
+  },
+  "LIT4": {
+    "age2": [],
+    "age3": [
+      "Identify which event happened in the story",
+      "Identify which event happened first in the story"
+    ],
+    "age4": [
+      "Identify the main character in the story",
+      "Retell the story by putting 3 events in the correct order"
+    ],
+    "kinder": [
+      "Identify the setting in the story",
+      "Retell the story by putting 4 events in the correct order"
+    ]
+  },
+  "LIT5": {
+    "age2": [
+      "Answer questions about what is happening in the story",
+      "Identify the feelings of characters in the story"
+    ],
+    "age3": [
+      "Answer questions about the main characters and events in the story"
+    ],
+    "age4": [
+      "Answer \"why\" and \"what\" questions in the story"
+    ],
+    "kinder": [
+      "Answer questions about illustrations in the story",
+      "Ask and answer questions about key details in the story"
+    ]
+  },
+  "MAT10": {
+    "age2": [],
+    "age3": [
+      "Select the picture that shows the named position (e.g., inside vs. outside)"
+    ],
+    "age4": [
+      "Select the picture that shows the named position (less common position words)",
+      "Move an object based on spoken directions"
+    ],
+    "kinder": [
+      "Move an object based on spoken directions (less common position words)"
+    ]
+  },
+  "MAT2": {
+    "age2": [],
+    "age3": [
+      "Answer how many?\" without counting"
+    ],
+    "age4": [
+      "up to 3 items\""
+    ],
+    "kinder": [
+      "Answer how many?\" without counting"
+    ]
+  },
+  "MAT3": {
+    "age2": [
+      "Count up to 3 items",
+      "Make a set of up to 3 items"
+    ],
+    "age3": [
+      "Count up to 5 items",
+      "Make a set of up to 5 items"
+    ],
+    "age4": [
+      "Count up to 10 items",
+      "Make a set of up to 10 items",
+      "Answer how many?\" for up to 10 items\""
+    ],
+    "kinder": [
+      "Count up to 20 items",
+      "Make a set of up to 20 items",
+      "Answer how many?\" for up to 20 items\""
+    ]
+  },
+  "MAT4": {
+    "age2": [
+      "Select the set with more or less, up to 2 items"
+    ],
+    "age3": [
+      "Select the set with more, most, less and least, up to 4 items",
+      "Select the first and second items in a line"
+    ],
+    "age4": [
+      "Select the set with more, most, less and least, up to 5 items",
+      "Select the first to fifth items in a line"
+    ],
+    "kinder": [
+      "Select the set with more, most, less and least, up to 10 items",
+      "Select the first to tenth items in a line"
+    ]
+  },
+  "MAT5": {
+    "age2": [],
+    "age3": [
+      "Pick a numeral by its name (up to 5)",
+      "Match numerals to the amounts they represent (up to 5)"
+    ],
+    "age4": [
+      "Pick a numeral by its name (up to 10)",
+      "Match numerals to the amounts they represent (up to 10)"
+    ],
+    "kinder": [
+      "Pick a numeral by its name (up to 20)",
+      "Match numerals to the amounts they represent (up to 20)",
+      "Identify which numeral is greater (up to 10)"
+    ]
+  },
+  "MAT6a": {
+    "age2": [],
+    "age3": [],
+    "age4": [
+      "Represent addition up to 5",
+      "Solve addition problems up to 5"
+    ],
+    "kinder": [
+      "Represent addition up to 10",
+      "Solve addition problems up to 10",
+      "Add using numerals, up to 5"
+    ]
+  },
+  "MAT6b": {
+    "age2": [],
+    "age3": [],
+    "age4": [
+      "Represent subtraction up to 5",
+      "Solve subtraction problems up to 5"
+    ],
+    "kinder": [
+      "Represent subtraction up to 10",
+      "Solve subtraction problems up to 10",
+      "Subtract using numerals, up to 5"
+    ]
+  },
+  "MAT7": {
+    "age2": [],
+    "age3": [
+      "Recreate ABAB patterns from a model",
+      "Fill in gaps in ABAB patterns",
+      "Extend complete ABAB patterns"
+    ],
+    "age4": [
+      "Recreate ABAB patterns from memory",
+      "Extend incomplete ABAB patterns"
+    ],
+    "kinder": [
+      "Recreate AAB, ABC and AABC patterns, from memory",
+      "Extend and complete AAB, ABC, and AABC patterns"
+    ]
+  },
+  "MAT8": {
+    "age2": [],
+    "age3": [
+      "Select the item that is taller, tallest, shorter and shortest"
+    ],
+    "age4": [
+      "Measure an object's length up to 5 units",
+      "Order up to 4 objects by length"
+    ],
+    "kinder": [
+      "Measure an object's length up to six units",
+      "Order up to 5 objects by length"
+    ]
+  },
+  "MAT9": {
+    "age2": [
+      "Match circles, triangles and squares"
+    ],
+    "age3": [
+      "Identify typical circles, triangles, and squares"
+    ],
+    "age4": [
+      "Identify varied circles, triangles and squares",
+      "Identify the number of sides or angles in a shape"
+    ],
+    "kinder": [
+      "Identify varied ovals, rectangles, and pentagons",
+      "Identify which shape has more sides or angles"
+    ]
+  }
+}
