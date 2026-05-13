@@ -604,7 +604,7 @@ nav { flex: 1; padding: 8px 8px 20px; }
 /* Window sub-rows (All assessment windows mode) — distinctly darker than data
    rows so the expanded fall/spring rows clearly read as nested under their
    parent. */
-.window-sub-row td { background: #d8dde8; }
+.window-sub-row td { background: #5c6786; }
 .window-sub-label {
   padding-left: 44px !important;
   font-size: 13px; font-weight: 500;

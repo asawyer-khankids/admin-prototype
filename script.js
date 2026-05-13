@@ -921,9 +921,9 @@ function renderFilterCard() {
     { value: 'demo',   label: 'demo' },
   ];
   const slGateOpts = [
-    { value: 'min1', label: 'they’ve passed any assessment' },
-    { value: 'min2', label: 'they’ve passed at least 2 assessments' },
-    { value: 'min3', label: 'they’ve passed at least 3 assessments' },
+    { value: 'min1', label: 'they’ve completed any assessment' },
+    { value: 'min2', label: 'they’ve completed at least 2 assessments' },
+    { value: 'min3', label: 'they’ve completed at least 3 assessments' },
     { value: 'spec', label: 'they’ve met the domain completion requirement' },
     { value: 'demo', label: 'demo' },
   ];
@@ -1018,7 +1018,10 @@ function renderToolbar(showToggle = true) {
     </label>` : '';
   // Collapse-all only makes sense when rows can be expanded — i.e., when
   // "All assessment windows" is selected (rows expand to show per-window data).
-  const isAllWindows = state.filters.window === 'All assessment windows';
+  // Also require CD.ready: if the dataset failed to load, the per-window
+  // aggregator returns empty counts, so expanding would show 0-of-0 rows.
+  // Hide the expand affordance entirely until real data is available.
+  const isAllWindows = state.filters.window === 'All assessment windows' && CD.ready;
   const collapseAll = (showToggle && isAllWindows) ? `
     <button class="btn btn-ghost" style="padding:5px 10px;font-size:11px;" data-action="collapseAll" title="Collapse all rows">
       &#8963; Collapse all
@@ -1111,7 +1114,10 @@ function renderWindowSubRows(getCounts, baseCtx) {
 
 // L0 – Domain list (Overview) or Standards list (specific domain selected)
 function renderSL_L0() {
-  const isAllWindows = state.filters.window === 'All assessment windows';
+  // Also require CD.ready: if the dataset failed to load, the per-window
+  // aggregator returns empty counts, so expanding would show 0-of-0 rows.
+  // Hide the expand affordance entirely until real data is available.
+  const isAllWindows = state.filters.window === 'All assessment windows' && CD.ready;
   const selectedDomain = state.filters.domain;
   const isStandardsMode = selectedDomain !== 'Overview';
 
@@ -1249,7 +1255,10 @@ function makeDrilledWindowAggregator(drilledEntry, lang, grade) {
 
 // L1 – Schools list (after clicking a domain)
 function renderSL_L1(path) {
-  const isAllWindows = state.filters.window === 'All assessment windows';
+  // Also require CD.ready: if the dataset failed to load, the per-window
+  // aggregator returns empty counts, so expanding would show 0-of-0 rows.
+  // Hide the expand affordance entirely until real data is available.
+  const isAllWindows = state.filters.window === 'All assessment windows' && CD.ready;
   const f = state.filters;
   const drilledAgg = makeDrilledWindowAggregator(path[0], f.language, f.grade);
   // District row first, then real schools from CD
@@ -1307,7 +1316,10 @@ function renderSL_L1(path) {
 
 // L2 – Classes list (after clicking a school)
 function renderSL_L2(path) {
-  const isAllWindows = state.filters.window === 'All assessment windows';
+  // Also require CD.ready: if the dataset failed to load, the per-window
+  // aggregator returns empty counts, so expanding would show 0-of-0 rows.
+  // Hide the expand affordance entirely until real data is available.
+  const isAllWindows = state.filters.window === 'All assessment windows' && CD.ready;
   const f = state.filters;
   // path = [domain, 'District' literal, school]
   const drilledAgg = makeDrilledWindowAggregator(path[0], f.language, f.grade);
